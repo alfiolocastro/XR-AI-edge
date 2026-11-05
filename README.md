@@ -10,7 +10,7 @@ language models, the image questions and the voice. Nothing is sent to a server.
 | **Spatial Chat** | Multi-turn chat with Gemma 4 E2B on a world-locked panel. Replies stream in and are read aloud. Past conversations are cards you can grab to resume. |
 | **Point & Ask** | Frame something in the real world with both hands (or point at it) and ask about it. The crop from the passthrough camera goes to Gemma 4 E2B with the question. The answer is pinned in space next to the object. Depth adds real measurements to the prompt ("about 34 cm wide, 1.1 m away"), so you can ask about size and fit. |
 | **Tabletop Garden** | A 3×3 planter placed on a real table with depth. You garden by voice or keyboard through the Gallery's FunctionGemma 270M Tiny Garden model (plant, water, harvest). You can also point ("water *these*") or play by hand with a watering can, seed packets, and pulling flowers. |
-| **What's That?** | Point at something in the room, with your index finger (hold still for a moment) or with a controller (pull the trigger). A ray and a reticle show where depth finds a real surface, with the live distance. Gemma names the object and describes it briefly, in English or Italian. The card pinned beside the object and the spoken reply give its distance from you, measured by depth rather than guessed. |
+| **What's That?** | Point at something in the room, with your index finger (hold still for a moment) or with a controller (pull the trigger). A ray and a reticle show where depth finds a real surface, with the live distance. Gemma names the object and describes it briefly, in English or Italian. The card pinned beside the object and the spoken reply give its distance from you, measured by depth rather than guessed. The object is highlighted: a live depth outline follows your pointing, and on selection an on-device interactive segmentation model (MediaPipe's magic touch, run with LiteRT in about 0.2 s) cuts it out of the camera image. |
 
 The project is built on the open-source on-device AI stack from [Google AI Edge](https://github.com/google-ai-edge):
 the Gallery app's experiences, the LiteRT-LM runtime, and the LiteRT-LM models published for it.
@@ -133,6 +133,8 @@ runtime under their own terms:
 | [Piper](https://github.com/rhasspy/piper) "alba" voice: training data from the [University of Edinburgh](https://datashare.ed.ac.uk/handle/10283/3270) | CC BY 4.0 |
 | [Piper](https://github.com/rhasspy/piper) "paola" voice: training data from [paolapersico1/Voice-Dataset-Italian](https://huggingface.co/datasets/paolapersico1/Voice-Dataset-Italian) | CC0 1.0 |
 | espeak-ng data, downloaded with each voice for phonemization | GPL-3.0 |
+| [LiteRT](https://github.com/google-ai-edge/LiteRT) 2.3.0 interpreter (`com.google.ai.edge.litert:litert`) | Apache 2.0 |
+| MediaPipe [interactive segmenter](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter) "magic touch" model (`magic_touch.tflite`, bundled) | See its model card |
 | Unity Mixed Reality template and package samples | Unity Companion License |
 
 Tiny Garden's original game art and code are not used. The garden is rebuilt in Unity from primitives.

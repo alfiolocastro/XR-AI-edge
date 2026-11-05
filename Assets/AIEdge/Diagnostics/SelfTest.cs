@@ -723,14 +723,52 @@ namespace AIEdge.Diagnostics
                 while (speech != null && speech.IsSpeaking && Time.realtimeSinceStartup < spokenDeadline)
                     await Awaitable.NextFrameAsync();
                 var utterances = speech != null ? speech.UtteranceCount - before : 0;
+
+                // The highlight: depth outline first, then the segmentation cut-out.
+                var segmentDeadline = Time.realtimeSinceStartup + 15f;
+                while (!result.SegmentationDone && Time.realtimeSinceStartup < segmentDeadline)
+                    await Awaitable.NextFrameAsync();
+                var segmentation = result.Segmentation;
+                if (segmentation == null)
+                    throw new TimeoutException("Segmentation never finished.");
+                if (segmentation.Error != null)
+                    throw new Exception("Segmentation failed: " + segmentation.Error);
+                if (segmentation.Mask != null)
+                    SaveMaskOverlay(result.ImagePath, segmentation, Path.Combine(Application.persistentDataPath, $"selftest_segmentation_{language}.png"));
+
                 var size = result.Depth != null && !result.Depth.FillsFrame ? $", {DepthRegion.FormatLength(result.Depth.Width)} wide" : "";
                 report.Append($"[{language}] \"{result.Name}\" at {DepthRegion.FormatLength(result.Distance)}{size}: " +
                     $"{result.Description} ({result.Stats.totalSec:0.0}s, {utterances} utterances, last in '{speech?.LastLanguage}', " +
-                    $"distance said as \"{PointerMath.SpokenDistance(result.Distance, language)}\"). ");
+                    $"distance said as \"{PointerMath.SpokenDistance(result.Distance, language)}\"); " +
+                    $"highlight {result.HighlightSource}, segmentation {segmentation.InferMs} ms, coverage {segmentation.Coverage:P0}, " +
+                    $"at point {segmentation.AtKeypoint:0.00}, usable {segmentation.IsUsable} ({segmentation.Info}). ");
             }
 
             panel.Language = SpeechLanguage.English;
             return report.ToString();
+        }
+
+        // The crop the model saw, tinted green where the segmentation mask is, to check the cut-out by eye.
+        static void SaveMaskOverlay(string cropPath, SegmentationResult segmentation, string path)
+        {
+            var crop = new Texture2D(2, 2);
+            if (!crop.LoadImage(File.ReadAllBytes(cropPath)))
+                return;
+            var pixels = crop.GetPixels32();
+            for (var y = 0; y < crop.height; y++)
+            for (var x = 0; x < crop.width; x++)
+            {
+                var mx = Mathf.Min(segmentation.Size - 1, x * segmentation.Size / crop.width);
+                var my = Mathf.Min(segmentation.Size - 1, y * segmentation.Size / crop.height);
+                if (segmentation.Mask[my * segmentation.Size + mx] <= 127)
+                    continue;
+                var i = y * crop.width + x;
+                pixels[i] = Color32.Lerp(pixels[i], new Color32(60, 255, 120, 255), 0.5f);
+            }
+
+            crop.SetPixels32(pixels);
+            File.WriteAllBytes(path, crop.EncodeToPNG());
+            Destroy(crop);
         }
 
         // Exit criterion: the garden lands on a real surface at once.

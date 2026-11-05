@@ -28,7 +28,8 @@ namespace AIEdge.WhatsThat
 
     /// <summary>
     /// Points at real objects with a hand or a controller and finds them with the depth sensor. Shows a ray, a reticle
-    /// on the real surface, and the live distance from the user's eyes.
+    /// on the real surface, the live distance from the user's eyes, and a live depth outline of the object pointed at
+    /// (<see cref="DepthMask"/>).
     /// <list type="bullet">
     /// <item>Hand: point with the index finger (other fingers curled) and hold still for a moment.</item>
     /// <item>Controller: aim and pull the trigger.</item>
@@ -78,6 +79,12 @@ namespace AIEdge.WhatsThat
         float m_DwellTime;
         Vector3 m_DwellAnchor;
         bool m_Armed = true;
+
+        // Live depth outline: a grid of eye rays around the pointed spot, refreshed a few times a second.
+        const int k_MaskGrid = 20;
+        const float k_MaskInterval = 0.2f;
+        ObjectHighlight m_Live;
+        float m_NextMask;
         Vector3 m_LastSelected;
 
         void Awake()
@@ -107,10 +114,14 @@ namespace AIEdge.WhatsThat
                 action.Disable();
             HasTarget = false;
             ShowVisuals(false);
+            if (m_Live != null)
+                m_Live.SetVisible(false);
         }
 
         void OnDestroy()
         {
+            if (m_Live != null)
+                Destroy(m_Live.gameObject);
             foreach (var action in Actions())
                 action.Dispose();
             if (m_Reticle != null)
@@ -156,6 +167,8 @@ namespace AIEdge.WhatsThat
                 HasTarget = false;
                 m_DwellTime = 0f;
                 m_Armed = true;
+                if (m_Live != null)
+                    m_Live.SetVisible(false);
                 ShowVisuals(found, ray, ray.origin + ray.direction * 0.6f, Vector3.zero, 0f);
                 return;
             }
@@ -177,6 +190,11 @@ namespace AIEdge.WhatsThat
             }
 
             ShowVisuals(true, ray, hit.point, hit.normal, progress, distance);
+            if (Time.time >= m_NextMask)
+            {
+                m_NextMask = Time.time + k_MaskInterval;
+                UpdateLiveOutline(eye, hit.point);
+            }
         }
 
         // Hand selection: hold the reticle steady for a moment. After a selection, the hand must move away (or stop
@@ -210,6 +228,75 @@ namespace AIEdge.WhatsThat
             m_DwellTime = 0f;
             Select();
             return 1f;
+        }
+
+        void UpdateLiveOutline(Vector3 eye, Vector3 point)
+        {
+            if (m_Live == null)
+            {
+                m_Live = ObjectHighlight.Create("LiveObjectOutline");
+                m_Live.SetStyle(ObjectHighlight.LiveColor, false);
+            }
+
+            if (TryDepthOutline(m_Depth, eye, point, k_MaskGrid, m_Live))
+                return;
+            m_Live.SetVisible(false);
+        }
+
+        /// <summary>
+        /// The live depth outline, handed over on selection so it stays on the object (it becomes the selection's
+        /// highlight until the image mask replaces it). Null if nothing was outlined.
+        /// </summary>
+        public ObjectHighlight TakeHighlight()
+        {
+            if (m_Live == null || !m_Live.gameObject.activeSelf)
+                return null;
+            var taken = m_Live;
+            m_Live = null;
+            return taken;
+        }
+
+        /// <summary>
+        /// Outlines the object at <paramref name="point"/> from depth: casts a <paramref name="grid"/>² grid of rays
+        /// from the eye through a square around the point and flood-fills from the center
+        /// (<see cref="DepthMask.FloodFill"/>). The highlight's plane passes through the point facing the eye, so the
+        /// outline lines up with the object from the user's view. False when depth shows a surface, not an object.
+        /// </summary>
+        public static bool TryDepthOutline(DepthService depth, Vector3 eye, Vector3 point, int grid, ObjectHighlight highlight)
+        {
+            var toPoint = point - eye;
+            var distance = toPoint.magnitude;
+            if (depth == null || !depth.IsReady || distance < 0.1f)
+                return false;
+
+            var rotation = Quaternion.LookRotation(toPoint / distance, Vector3.up);
+            var size = PointerMath.RegionSize(distance);
+            var right = rotation * Vector3.right;
+            var up = rotation * Vector3.up;
+            var distances = new float[grid, grid];
+            var normals = new Vector3[grid, grid];
+            for (var x = 0; x < grid; x++)
+            for (var y = 0; y < grid; y++)
+            {
+                var target = point + right * ((x + 0.5f) / grid - 0.5f) * size + up * ((y + 0.5f) / grid - 0.5f) * size;
+                var ray = new Ray(eye, (target - eye).normalized);
+                if (depth.Raycast(ray, out var hit, distance * 2f + 1f))
+                {
+                    distances[x, y] = Vector3.Distance(eye, hit.point);
+                    normals[x, y] = hit.normal;
+                }
+                else
+                {
+                    distances[x, y] = float.NaN;
+                }
+            }
+
+            var mask = DepthMask.FloodFill(distances, normals);
+            if (mask == null)
+                return false;
+            highlight.SetPlane(point, rotation, new Vector2(size, size));
+            highlight.ShowDepthMask(mask);
+            return true;
         }
 
         void Select()

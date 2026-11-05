@@ -149,6 +149,10 @@ Packages/packages-lock.json linguist-generated
 *.pdb                   lfs
 *.so                    lfs
 
+# Machine learning models
+*.tflite                lfs
+*.onnx                  lfs
+
 # Fonts
 *.otf                   lfs
 *.ttf                   lfs

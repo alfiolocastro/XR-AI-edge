@@ -28,13 +28,23 @@ namespace AIEdge.WhatsThat
         public string ImagePath;
         public LlmStats Stats;
         public string Error;
+
+        /// <summary>Where the object's highlight came from: "depth", "segmentation", or "" for none.</summary>
+        public string HighlightSource = "";
+
+        /// <summary>The segmentation of the pointed object (set when it finishes, which may be after the answer).</summary>
+        public SegmentationResult Segmentation;
+
+        /// <summary>True once segmentation finished or was skipped.</summary>
+        public bool SegmentationDone;
     }
 
     /// <summary>
     /// What's That?: point at something in the room with a hand or a controller. The depth sensor finds the spot and
     /// measures the object, the passthrough camera image around it goes to Gemma, and the answer, the object's name
     /// and a short description, appears on a card pinned beside it, with its distance from you. The answer is read
-    /// aloud, followed by the distance.
+    /// aloud, followed by the distance. The object is highlighted: by its depth outline at once, then by an image
+    /// cut-out from interactive segmentation (<see cref="ObjectSegmenter"/>).
     /// </summary>
     public class WhatsThatPanel : MonoBehaviour
     {
@@ -88,6 +98,8 @@ namespace AIEdge.WhatsThat
         ModelInfo Model => ModelCatalog.Gemma4E2B;
 
         ObjectPointer m_Pointer;
+        ObjectSegmenter m_Segmenter;
+        readonly Dictionary<AnswerCard, ObjectHighlight> m_Highlights = new Dictionary<AnswerCard, ObjectHighlight>();
         RectTransform m_Panel;
         TextMeshProUGUI m_Status;
         Button m_English;
@@ -110,6 +122,7 @@ namespace AIEdge.WhatsThat
             m_Pointer = new GameObject("WhatsThatPointer").AddComponent<ObjectPointer>();
             m_Pointer.transform.SetParent(transform, false);
             m_Pointer.enabled = false;
+            m_Segmenter = gameObject.AddComponent<ObjectSegmenter>();
         }
 
         void OnEnable() => m_Pointer.Selected += OnSelected;
@@ -197,6 +210,14 @@ namespace AIEdge.WhatsThat
                 return;
             }
 
+            if (m_Depth == null)
+                m_Depth = DepthService.Instance;
+            if (m_Depth == null || !m_Depth.IsReady)
+            {
+                SetStatus("Depth is still starting. Try again in a moment.");
+                return;
+            }
+
             var eye = Camera.main.transform.position;
             var distance = Vector3.Distance(eye, target.Point);
 
@@ -258,13 +279,14 @@ namespace AIEdge.WhatsThat
                 : $"{DepthRegion.FormatLength(distance)} away";
             card.SetMeasurement(label);
             card.PinBeside(blob != null && !blob.FillsFrame ? blob.Center : target.Point, blob != null && !blob.FillsFrame ? blob.Width : 0.1f);
-            card.Closed += c => m_Cards.Remove(c);
+            card.Closed += OnCardClosed;
             m_Cards.Add(card);
 
             var facts = blob != null && !blob.FillsFrame
                 ? $"The headset's depth sensor measured it as about {DepthRegion.FormatLength(blob.Width)} wide and {DepthRegion.FormatLength(blob.Height)} tall."
                 : "";
             m_Pending = new WhatsThatResult { Target = target, Distance = distance, Depth = blob, ImagePath = path };
+            HighlightObject(m_Pending, card, target, eye, cameraPose, crop);
             m_PendingCard = card;
             m_Pointer.CanSelect = false;
             m_Stream.Clear();
@@ -273,6 +295,70 @@ namespace AIEdge.WhatsThat
             m_Service.NewConversation();
             SpeechEngine.Instance?.BeginReply();
             m_Service.Engine.Send(PointerMath.Prompt(facts, Language), path);
+        }
+
+        // The selected object's highlight: the pointer's live depth outline (or a fresh one) right away, then the
+        // segmentation cut-out of the camera crop once it is ready. It lives as long as the card.
+        void HighlightObject(WhatsThatResult result, AnswerCard card, PointerTarget target, Vector3 eye, Pose cameraPose, RectInt crop)
+        {
+            var highlight = m_Pointer.TakeHighlight();
+            if (highlight == null)
+            {
+                highlight = ObjectHighlight.Create("ObjectHighlight");
+                if (!ObjectPointer.TryDepthOutline(m_Depth, eye, target.Point, 24, highlight))
+                    highlight.SetVisible(false);
+            }
+
+            highlight.transform.SetParent(m_CardRoot, true);
+            highlight.SetStyle(ObjectHighlight.SelectedColor, true);
+            m_Highlights[card] = highlight;
+            result.HighlightSource = highlight.gameObject.activeSelf ? "depth" : "";
+
+            // Where the pointed spot falls in the crop, normalized with the origin at the top-left (PNG order).
+            var viewport = m_Camera.CameraAccess.WorldToViewportPoint(target.Point, cameraPose);
+            var resolution = m_Camera.Resolution;
+            var keypoint = new Vector2(
+                (viewport.x * resolution.x - crop.x) / crop.width,
+                1f - (viewport.y * resolution.y - crop.y) / crop.height);
+            _ = SegmentAsync(result, card, highlight, target.Point, cameraPose, crop, keypoint);
+        }
+
+        async Awaitable SegmentAsync(WhatsThatResult result, AnswerCard card, ObjectHighlight highlight, Vector3 point,
+            Pose cameraPose, RectInt crop, Vector2 keypoint)
+        {
+            var segmentation = await m_Segmenter.SegmentAsync(result.ImagePath, keypoint);
+            result.Segmentation = segmentation;
+            result.SegmentationDone = true;
+            Debug.Log($"[AIEdge] What's That? segmentation: {segmentation.Error ?? segmentation.Info}");
+            if (highlight == null || !m_Highlights.ContainsKey(card) || !segmentation.IsUsable)
+                return;
+
+            // The crop's corners, cast from the camera onto the plane through the object facing the camera.
+            var forward = cameraPose.rotation * Vector3.forward;
+            var depth = Vector3.Dot(point - cameraPose.position, forward);
+            var resolution = (Vector2)m_Camera.Resolution;
+            Vector3 Corner(float x, float y)
+            {
+                var ray = m_Camera.CameraAccess.ViewportPointToRay(new Vector2(x / resolution.x, y / resolution.y), cameraPose);
+                return ray.origin + ray.direction * (depth / Mathf.Max(0.1f, Vector3.Dot(ray.direction, forward)));
+            }
+
+            var bottomLeft = Corner(crop.xMin, crop.yMin);
+            var bottomRight = Corner(crop.xMax, crop.yMin);
+            var topLeft = Corner(crop.xMin, crop.yMax);
+            var topRight = Corner(crop.xMax, crop.yMax);
+            var center = (bottomLeft + bottomRight + topLeft + topRight) / 4f;
+            var size = new Vector2(Vector3.Distance(bottomLeft, bottomRight), Vector3.Distance(bottomLeft, topLeft));
+            highlight.SetPlane(center, Quaternion.LookRotation(forward, cameraPose.rotation * Vector3.up), size);
+            highlight.ShowSegmentation(segmentation.Mask, segmentation.Size, segmentation.Coverage);
+            result.HighlightSource = "segmentation";
+        }
+
+        void OnCardClosed(AnswerCard card)
+        {
+            m_Cards.Remove(card);
+            if (m_Highlights.Remove(card, out var highlight) && highlight != null)
+                Destroy(highlight.gameObject);
         }
 
         void Update()
