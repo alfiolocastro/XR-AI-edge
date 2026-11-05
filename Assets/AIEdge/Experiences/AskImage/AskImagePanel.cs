@@ -241,10 +241,11 @@ namespace AIEdge.AskImage
             SetStatus($"Asking about a {crop.width}×{crop.height} crop…");
 
             // Each question is its own single-turn conversation, as in the Gallery's Ask Image.
-            m_Service.NewConversation();
+            m_Service.NewConversation(UserInstructions.Compose(""));
             var prompt = facts.Length > 0 ? $"{facts} Use these measurements if the question is about size or distance.\n\n{question}" : question;
-            SpeechEngine.Instance?.BeginReply();
-            m_Service.Engine.Send(prompt, path);
+            var language = UserInstructions.ReplyLanguage(question);
+            SpeechEngine.Instance?.BeginReply(language);
+            m_Service.Engine.Send(UserInstructions.ForModel(prompt, language), path);
         }
 
         void Update()

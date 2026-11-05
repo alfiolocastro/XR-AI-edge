@@ -15,7 +15,7 @@ namespace AIEdge.UI
     public class LauncherPanel : MonoBehaviour
     {
         const float k_Width = 900f;
-        const float k_Height = 1030f;
+        const float k_Height = 1046f;
         const float k_VoiceRowHeight = 100f;
         const int k_ExperienceCount = 4;
         const float k_RefreshInterval = 0.25f;
@@ -28,6 +28,9 @@ namespace AIEdge.UI
 
         /// <summary>Raised when the Benchmark button is pressed.</summary>
         public event Action BenchmarkRequested;
+
+        /// <summary>Raised when the My instructions button is pressed.</summary>
+        public event Action InstructionsRequested;
 
         class ModelRow
         {
@@ -151,14 +154,16 @@ namespace AIEdge.UI
 
             m_Footer = UiFactory.CreateText(m_Panel, "Footer", "", 20);
             m_Footer.color = UiFactory.MutedTextColor;
-            UiFactory.Place(m_Footer.rectTransform, 32, y + 6, 836, 60);
+            UiFactory.Place(m_Footer.rectTransform, 32, y + 4, 836, 84);
 
-            var benchmark = UiFactory.CreateButton(m_Panel, "Benchmark", UiFactory.CardColor, () => BenchmarkRequested?.Invoke());
-            UiFactory.Place((RectTransform)benchmark.transform, 32, y + 80, 268, 60);
-            var unload = UiFactory.CreateButton(m_Panel, "Unload model", UiFactory.CardColor, () => m_Service.Unload());
-            UiFactory.Place((RectTransform)unload.transform, 316, y + 80, 268, 60);
-            var recenter = UiFactory.CreateButton(m_Panel, "Recenter", UiFactory.CardColor, Recenter);
-            UiFactory.Place((RectTransform)recenter.transform, 600, y + 80, 268, 60);
+            var instructions = UiFactory.CreateButton(m_Panel, "My instructions", UiFactory.AccentColor, () => InstructionsRequested?.Invoke(), 22);
+            UiFactory.Place((RectTransform)instructions.transform, 32, y + 96, 200, 60);
+            var benchmark = UiFactory.CreateButton(m_Panel, "Benchmark", UiFactory.CardColor, () => BenchmarkRequested?.Invoke(), 22);
+            UiFactory.Place((RectTransform)benchmark.transform, 244, y + 96, 200, 60);
+            var unload = UiFactory.CreateButton(m_Panel, "Unload model", UiFactory.CardColor, () => m_Service.Unload(), 22);
+            UiFactory.Place((RectTransform)unload.transform, 456, y + 96, 200, 60);
+            var recenter = UiFactory.CreateButton(m_Panel, "Recenter", UiFactory.CardColor, Recenter, 22);
+            UiFactory.Place((RectTransform)recenter.transform, 668, y + 96, 200, 60);
         }
 
         ModelRow BuildModelRow(ModelInfo model, float y)
@@ -408,7 +413,8 @@ namespace AIEdge.UI
             var loaded = m_Service.LoadedModel;
             var memory = loaded != null && m_Service.LoadInfo != null ? $"{loaded.displayName} loaded ({m_Service.LoadInfo.backend}, {m_Service.LoadInfo.pssMb} MB)" : "No model loaded";
             var token = ModelStore.HuggingFaceToken != null ? "found" : "missing (add hf_token.txt to the app folder for gated models)";
-            m_Footer.text = $"{memory}\nStorage free: {ModelDownloader.FormatBytes(ModelStore.GetFreeBytes())} · Hugging Face token: {token}";
+            m_Footer.text = $"{memory}\nStorage free: {ModelDownloader.FormatBytes(ModelStore.GetFreeBytes())} · Hugging Face token: {token}\n" +
+                $"My instructions: {MarkdownToTmp.Escape(UserInstructions.Summary(70))}";
         }
 
         void RefreshRow(ModelRow row)

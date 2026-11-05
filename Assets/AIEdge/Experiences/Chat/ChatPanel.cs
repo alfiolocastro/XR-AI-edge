@@ -109,10 +109,22 @@ namespace AIEdge.Chat
         {
             if (m_Service == null)
                 m_Service = LlmService.Instance;
+            UserInstructions.Changed += OnInstructionsChanged;
+        }
+
+        // New instructions reach the system prompt: rebuild the conversation (from history) before the next message.
+        void OnInstructionsChanged()
+        {
+            if (IsGenerating)
+                return;
+            m_ConversationReady = false;
+            if (IsOpen)
+                _ = PrepareAsync();
         }
 
         void OnDestroy()
         {
+            UserInstructions.Changed -= OnInstructionsChanged;
             Unsubscribe();
             if (m_CardRoot != null)
                 Destroy(m_CardRoot.gameObject);
@@ -224,8 +236,9 @@ namespace AIEdge.Chat
             m_ScrollToBottom = true;
             RefreshControls();
 
-            SpeechEngine.Instance?.BeginReply();
-            m_Service.Engine.Send(text);
+            var language = UserInstructions.ReplyLanguage(text);
+            SpeechEngine.Instance?.BeginReply(language);
+            m_Service.Engine.Send(UserInstructions.ForModel(text, language));
         }
 
         /// <summary>Stops the answer in progress.</summary>
@@ -294,7 +307,7 @@ namespace AIEdge.Chat
                 }
 
                 var history = ChatContext.SelectHistory(m_Thread.messages, ChatContext.HistoryBudgetChars(Model.maxTokens));
-                m_Service.NewConversation(m_Thread.systemPrompt, history: history);
+                m_Service.NewConversation(UserInstructions.Compose(m_Thread.systemPrompt), history: history);
                 m_ConversationReady = true;
                 var info = m_Service.LoadInfo;
                 SetStatus($"{Model.displayName} · {info?.backend ?? "?"}" +
@@ -380,7 +393,7 @@ namespace AIEdge.Chat
             if (ChatContext.ShouldTrim(stats.kvTokens, Model.maxTokens))
             {
                 var history = ChatContext.SelectHistory(m_Thread.messages, ChatContext.HistoryBudgetChars(Model.maxTokens));
-                m_Service.NewConversation(m_Thread.systemPrompt, history: history);
+                m_Service.NewConversation(UserInstructions.Compose(m_Thread.systemPrompt), history: history);
                 SetStatus($"{Model.displayName} · context trimmed to the last {history.Count} messages");
             }
         }

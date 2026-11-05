@@ -26,14 +26,27 @@ namespace AIEdge.WhatsThat
         /// </summary>
         public static float RegionSize(float distance) => Mathf.Clamp(distance * 0.45f, 0.3f, 1.4f);
 
-        /// <summary>The model prompt: name in bold, then a short description, in the chosen language.</summary>
-        public static string Prompt(string facts, string language)
+        /// <summary>
+        /// The model prompt: name in bold, then a short description, in the chosen language. With
+        /// <paramref name="personalInstructions"/>, it leaves room for one more sentence following the user's
+        /// instructions (they are in the system prompt, see <see cref="UserInstructions"/>).
+        /// </summary>
+        /// <summary>System prompt for Italian answers, so English personal instructions don't pull the reply into English.</summary>
+        public const string ItalianSystemPrompt =
+            "Rispondi sempre e solo in italiano, in ogni frase, anche quando le istruzioni sono scritte in un'altra lingua.";
+
+        public static string Prompt(string facts, string language, bool personalInstructions = false)
         {
-            var reply = language == SpeechLanguage.Italian ? " Reply in Italian." : "";
+            var italian = language == SpeechLanguage.Italian;
+            var reply = italian ? " Reply in Italian." : "";
             var measured = string.IsNullOrEmpty(facts) ? "" : $" {facts}";
+            var personal = personalInstructions
+                ? " If the user's personal instructions apply to this object, follow them in one more short sentence" +
+                  (italian ? ", written in Italian like the rest of the reply." : ".")
+                : "";
             return "The user is pointing at the object in the center of this image. " +
                    "Start with its name in bold, then describe it in one or two short sentences. " +
-                   "Don't mention its distance." + measured + reply;
+                   "Don't mention its distance." + measured + personal + reply;
         }
 
         static readonly Regex s_Bold = new Regex(@"\*\*(.+?)\*\*", RegexOptions.Singleline);

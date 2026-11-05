@@ -49,7 +49,7 @@ namespace AIEdge.WhatsThat
     public class WhatsThatPanel : MonoBehaviour
     {
         const float k_Width = 640f;
-        const float k_Height = 330f;
+        const float k_Height = 350f;
         const float k_CropPadding = 0.1f;
         const int k_MinCropPixels = 224;
         const float k_RenderInterval = 0.06f;
@@ -77,6 +77,9 @@ namespace AIEdge.WhatsThat
         /// <summary>Raised when an answer finishes or fails.</summary>
         public event Action<WhatsThatResult> AnswerFinished;
 
+        /// <summary>Raised when the user wants to edit their instructions.</summary>
+        public event Action InstructionsRequested;
+
         /// <summary>True when the vision model is loaded, the camera streams and no question is running.</summary>
         public bool IsReady => m_ModelReady && m_Camera != null && m_Camera.IsReady && m_Pending == null && !m_Preparing;
 
@@ -102,6 +105,7 @@ namespace AIEdge.WhatsThat
         readonly Dictionary<AnswerCard, ObjectHighlight> m_Highlights = new Dictionary<AnswerCard, ObjectHighlight>();
         RectTransform m_Panel;
         TextMeshProUGUI m_Status;
+        TextMeshProUGUI m_Instructions;
         Button m_English;
         Button m_Italian;
         Transform m_CardRoot;
@@ -131,6 +135,7 @@ namespace AIEdge.WhatsThat
 
         void OnDestroy()
         {
+            UserInstructions.Changed -= RefreshInstructions;
             Unsubscribe();
             if (m_CardRoot != null)
                 Destroy(m_CardRoot.gameObject);
@@ -292,9 +297,12 @@ namespace AIEdge.WhatsThat
             m_Stream.Clear();
             SetStatus($"Looking at what you pointed at, {DepthRegion.FormatLength(distance)} away…");
 
-            m_Service.NewConversation();
-            SpeechEngine.Instance?.BeginReply();
-            m_Service.Engine.Send(PointerMath.Prompt(facts, Language), path);
+            // The user's instructions are usually written in English; an Italian system prompt keeps the whole reply,
+            // and its voice, in Italian when Italiano is selected.
+            var italian = Language == SpeechLanguage.Italian;
+            m_Service.NewConversation(UserInstructions.Compose(italian ? PointerMath.ItalianSystemPrompt : ""));
+            SpeechEngine.Instance?.BeginReply(Language);
+            m_Service.Engine.Send(PointerMath.Prompt(facts, Language, UserInstructions.IsActive), path);
         }
 
         // The selected object's highlight: the pointer's live depth outline (or a fresh one) right away, then the
@@ -535,12 +543,22 @@ namespace AIEdge.WhatsThat
             var clear = UiFactory.CreateButton(m_Panel, "Clear", UiFactory.CardColor, ClearCards, 20);
             UiFactory.Place((RectTransform)clear.transform, k_Width - 184, 226, 160, 50);
 
-            var hint = UiFactory.CreateText(m_Panel, "Hint", "Hand: point and hold · Controller: trigger", 16);
-            hint.color = UiFactory.MutedTextColor;
-            UiFactory.Place(hint.rectTransform, 24, 288, k_Width - 48, 30);
+            m_Instructions = UiFactory.CreateText(m_Panel, "Instructions", "", 17);
+            m_Instructions.color = UiFactory.MutedTextColor;
+            UiFactory.Place(m_Instructions.rectTransform, 24, 288, k_Width - 236, 50);
+            var edit = UiFactory.CreateButton(m_Panel, "My instructions", UiFactory.CardColor, () => InstructionsRequested?.Invoke(), 18);
+            UiFactory.Place((RectTransform)edit.transform, k_Width - 184, 286, 160, 48);
+            UserInstructions.Changed += RefreshInstructions;
+            RefreshInstructions();
 
             m_CardRoot = new GameObject("WhatsThatCards").transform;
             RefreshControls();
+        }
+
+        void RefreshInstructions()
+        {
+            if (m_Instructions != null)
+                m_Instructions.text = $"My instructions: {MarkdownToTmp.Escape(UserInstructions.Summary(70))}";
         }
 
         void ClearCards()

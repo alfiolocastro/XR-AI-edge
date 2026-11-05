@@ -1,7 +1,9 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using AIEdge.AskImage;
 using AIEdge.Chat;
@@ -54,6 +56,8 @@ namespace AIEdge.Diagnostics
             await Run("speech", TestSpeech);
             await Run("speech_it", TestSpeechItalian);
             await Run("whats_that", TestWhatsThat);
+            await Run("instructions", TestInstructions);
+            await Run("instructions_it", TestInstructionsItalian);
             await Run("depth_place", TestDepthPlace);
             await Run("depth_garden", TestDepthGarden);
 
@@ -746,6 +750,124 @@ namespace AIEdge.Diagnostics
 
             panel.Language = SpeechLanguage.English;
             return report.ToString();
+        }
+
+        // Personal instructions written in English, with What's That? set to Italiano: every sentence of the reply is in
+        // Italian and the whole reply is read by the Italian voice.
+        async Awaitable<string> TestInstructionsItalian()
+        {
+            var savedText = UserInstructions.Text;
+            var savedEnabled = UserInstructions.Enabled;
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            var panel = app.WhatsThat;
+            var speech = SpeechEngine.Instance;
+            var report = new StringBuilder();
+            try
+            {
+                UserInstructions.Set("I'm on a strict diet. After describing any object, always add one short joke " +
+                                     "teasing me about my diet.", true);
+                if (app.Chat.IsOpen)
+                    app.Chat.Close();
+                if (!panel.IsOpen)
+                    app.OpenWhatsThat();
+                var deadline = Time.realtimeSinceStartup + 120f;
+                while (!panel.IsReady && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+                if (!panel.IsReady)
+                    throw new TimeoutException("What's That? never became ready.");
+
+                panel.Language = SpeechLanguage.Italian;
+                var english = 0;
+                var languages = new HashSet<string>();
+                for (var attempt = 0; attempt < 2; attempt++)
+                {
+                    WhatsThatResult result = null;
+                    void OnFinished(WhatsThatResult r) => result = r;
+                    panel.AnswerFinished += OnFinished;
+                    var head = Camera.main.transform;
+                    var ray = new Ray(head.position, Quaternion.AngleAxis(15f, head.right) * head.forward);
+                    if (!panel.AskAlong(ray))
+                    {
+                        panel.AnswerFinished -= OnFinished;
+                        throw new Exception("Depth found nothing straight ahead.");
+                    }
+
+                    // Sample the voice of every utterance while the reply streams in.
+                    deadline = Time.realtimeSinceStartup + 90f;
+                    while ((result == null || speech != null && speech.IsSpeaking) && Time.realtimeSinceStartup < deadline)
+                    {
+                        if (speech?.LastLanguage != null && speech.IsSpeaking)
+                            languages.Add(speech.LastLanguage);
+                        await Awaitable.NextFrameAsync();
+                    }
+                    panel.AnswerFinished -= OnFinished;
+                    if (result == null)
+                        throw new TimeoutException("No answer.");
+                    if (result.Error != null)
+                        throw new Exception(result.Error);
+
+                    foreach (var sentence in Regex.Split(result.Reply, @"(?<=[.!?])\s+"))
+                        if (SpeechLanguage.Detect(sentence) == SpeechLanguage.English)
+                        {
+                            english++;
+                            report.Append($"ENGLISH SENTENCE: \"{sentence}\" ");
+                        }
+                    report.Append($"[{attempt}] {result.Reply.Replace("\n", " ")} | ");
+                }
+
+                report.Append($"voices used: {string.Join(",", languages)}");
+                if (english > 0)
+                    throw new Exception($"{english} English sentence(s) in Italian replies. " + report);
+                if (languages.Contains(SpeechLanguage.English))
+                    throw new Exception("The English voice read part of an Italian reply. " + report);
+                return report.ToString();
+            }
+            finally
+            {
+                panel.Language = SpeechLanguage.English;
+                UserInstructions.Set(savedText, savedEnabled);
+            }
+        }
+
+        // Personal instructions: with the "Strict diet" preset on, a chat about a cake gets teased about the diet, and
+        // What's That? still answers in its format. The user's own instructions are restored afterwards.
+        async Awaitable<string> TestInstructions()
+        {
+            var savedText = UserInstructions.Text;
+            var savedEnabled = UserInstructions.Enabled;
+            var diet = Array.Find(UserInstructions.Presets, preset => preset.Name == "Strict diet").Text;
+            var report = new StringBuilder();
+            try
+            {
+                UserInstructions.Set(diet, true);
+                var app = FindAnyObjectByType<AIEdgeApp>();
+                if (app.WhatsThat.IsOpen)
+                    app.WhatsThat.Close();
+                if (!app.Chat.IsOpen)
+                    app.OpenChat();
+                app.Chat.NewChat();
+                var cake = await ChatTurnAsync(app.Chat, "I'm looking at a big slice of chocolate cake right now. What is it?");
+                var teased = cake.text.IndexOf("diet", StringComparison.OrdinalIgnoreCase) >= 0;
+                report.Append($"cake reply ({(teased ? "mentions the diet" : "NO diet mention")}): {cake.text.Replace("\n", " ")} | ");
+
+                app.Chat.NewChat();
+                var salad = await ChatTurnAsync(app.Chat, "I'm looking at a bowl of green salad. What is it?");
+                report.Append($"salad reply: {salad.text.Replace("\n", " ")} | ");
+
+                UserInstructions.Set(diet, false);
+                app.Chat.NewChat();
+                var plain = await ChatTurnAsync(app.Chat, "I'm looking at a big slice of chocolate cake right now. What is it?");
+                var plainTeased = plain.text.IndexOf("diet", StringComparison.OrdinalIgnoreCase) >= 0;
+                report.Append($"instructions off ({(plainTeased ? "still mentions the diet" : "no diet mention")}): {plain.text.Replace("\n", " ")}");
+                app.Chat.Close();
+                if (!teased)
+                    throw new Exception("The diet instructions were ignored. " + report);
+                return report.ToString();
+            }
+            finally
+            {
+                UserInstructions.Set(savedText, savedEnabled);
+            }
         }
 
         // The crop the model saw, tinted green where the segmentation mask is, to check the cut-out by eye.

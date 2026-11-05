@@ -32,6 +32,9 @@ namespace AIEdge
         [SerializeField, Tooltip("What's That? (point at an object) experience. Created at start if empty.")]
         WhatsThatPanel m_WhatsThat;
 
+        [SerializeField, Tooltip("Editor for the user's standing instructions. Created at start if empty.")]
+        InstructionsPanel m_Instructions;
+
         [SerializeField, Tooltip("The template's AR feature hub. Uses the one in the scene if empty.")]
         ARFeatureController m_ArFeatures;
 
@@ -47,10 +50,17 @@ namespace AIEdge
         /// <summary>The What's That? experience.</summary>
         public WhatsThatPanel WhatsThat => m_WhatsThat;
 
+        /// <summary>The instructions editor.</summary>
+        public InstructionsPanel Instructions => m_Instructions;
+
+        bool m_LauncherHiddenForInstructions;
+
         void Awake()
         {
             if (m_WhatsThat == null)
                 m_WhatsThat = new GameObject("WhatsThat").AddComponent<WhatsThatPanel>();
+            if (m_Instructions == null)
+                m_Instructions = new GameObject("Instructions").AddComponent<InstructionsPanel>();
         }
 
         async void Start()
@@ -78,6 +88,9 @@ namespace AIEdge
             m_AskImage.Closed += OnExperienceClosed;
             m_Garden.Closed += OnExperienceClosed;
             m_WhatsThat.Closed += OnExperienceClosed;
+            m_Launcher.InstructionsRequested += OnLauncherInstructions;
+            m_WhatsThat.InstructionsRequested += OpenInstructions;
+            m_Instructions.Closed += OnInstructionsClosed;
         }
 
         void OnDisable()
@@ -88,6 +101,9 @@ namespace AIEdge
             m_AskImage.Closed -= OnExperienceClosed;
             m_Garden.Closed -= OnExperienceClosed;
             m_WhatsThat.Closed -= OnExperienceClosed;
+            m_Launcher.InstructionsRequested -= OnLauncherInstructions;
+            m_WhatsThat.InstructionsRequested -= OpenInstructions;
+            m_Instructions.Closed -= OnInstructionsClosed;
         }
 
         /// <summary>Hides the launcher and opens AI Chat.</summary>
@@ -116,6 +132,24 @@ namespace AIEdge
         {
             m_Launcher.SetVisible(false);
             m_WhatsThat.Open();
+        }
+
+        /// <summary>Opens the instructions editor in front of the user (over the current experience).</summary>
+        public void OpenInstructions() => m_Instructions.Open();
+
+        void OnLauncherInstructions()
+        {
+            m_LauncherHiddenForInstructions = true;
+            m_Launcher.SetVisible(false);
+            OpenInstructions();
+        }
+
+        void OnInstructionsClosed()
+        {
+            if (!m_LauncherHiddenForInstructions)
+                return;
+            m_LauncherHiddenForInstructions = false;
+            OnExperienceClosed();
         }
 
         void OnBenchmarkRequested()

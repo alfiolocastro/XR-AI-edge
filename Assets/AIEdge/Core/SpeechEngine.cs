@@ -168,12 +168,16 @@ namespace AIEdge
             ShutdownEngine();
         }
 
-        /// <summary>Starts reading a new streamed reply, cutting off anything still being spoken.</summary>
-        public void BeginReply()
+        /// <summary>
+        /// Starts reading a new streamed reply, cutting off anything still being spoken. With
+        /// <paramref name="language"/> ("en", "it") the whole reply is read by that voice; otherwise the voice follows
+        /// the reply's detected language.
+        /// </summary>
+        public void BeginReply(string language = null)
         {
             Stop();
             m_Reply = new SpeechText();
-            m_ReplyLanguage = null;
+            m_ReplyLanguage = language;
             m_ReplyStarted = Time.realtimeSinceStartup;
             LastReplyAudioLatency = -1f;
         }

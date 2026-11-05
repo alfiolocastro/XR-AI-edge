@@ -19,6 +19,11 @@ Replies in every experience can be spoken by neural voices (Piper, through sherp
 **Italian**. Each reply is read by the voice of its language, detected from the text. Ask in Italian and Gemma answers
 in Italian, read by the Italian voice. The system text-to-speech engine on Quest is disabled.
 
+**My instructions** lets you tell the model, in plain words, how to reply. For example: "I'm on a strict diet. If I
+point at cake or junk food, make fun of me for it." The instructions apply in Spatial Chat, Point & Ask and What's That?,
+are stored on the headset, and can be turned off without deleting them. Open the editor from the launcher or from the
+What's That? panel. It offers a few presets (Strict diet, Kid-friendly, Plant lover, Safety first, Pirate) as starting points.
+
 ## Requirements
 
 - **Headset:** Meta Quest 3 or 3S. Passthrough Camera Access and depth need the Quest 3 family.
@@ -110,6 +115,7 @@ Notes:
    - Downloads: `resume_download`, `small_download`, `gated_without_token`, `cancel_and_reset`, `unload_memory`
    - Chat and Point & Ask: `chat_multiturn`, `ask_image`
    - What's That?: `whats_that`
+   - My instructions: `instructions`, `instructions_it`
    - Garden: `garden`, `garden_view`
    - Depth: `depth`, `depth_ask`, `depth_place`, `depth_garden`
    - Voice: `speech`, `speech_it`
