@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Merged into the app manifest by Gradle, so the SDK-generated Assets/Plugins/Android/AndroidManifest.xml stays untouched. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Passthrough Camera Access (Quest 3 / 3S). -->
+    <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
+    <!-- Android 11+ package visibility: lets TextToSpeech find the system speech engine (Meta's on-device synthesis on Quest). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+    <application>
+        <!-- LiteRT-LM GPU backend. Optional so the app still installs where OpenCL isn't exposed. -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
+    </application>
+</manifest>

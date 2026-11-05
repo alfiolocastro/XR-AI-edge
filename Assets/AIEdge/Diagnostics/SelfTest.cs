@@ -1,0 +1,727 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using AIEdge.AskImage;
+using AIEdge.Chat;
+using AIEdge.Spatial;
+using AIEdge.TinyGarden;
+using UnityEngine;
+
+namespace AIEdge.Diagnostics
+{
+    /// <summary>
+    /// On-device checks for the core layer: download resume and integrity, gated-model errors, generation
+    /// cancel and conversation reset, and memory after unload. Runs at startup only when
+    /// <c>persistentDataPath/selftest.json</c> exists, and logs <c>SELFTEST|{json}</c> lines (logcat tag Unity).
+    /// Expects Gemma 4 E2B already downloaded (used as the reference for the byte comparison).
+    /// </summary>
+    public class SelfTest : MonoBehaviour
+    {
+        const long k_ChunkBytes = 32L * 1024 * 1024;
+        const int k_CompareWindow = 512 * 1024;
+
+        LlmService m_Service;
+
+        string m_Config;
+
+        async void Start()
+        {
+            var configPath = Path.Combine(Application.persistentDataPath, "selftest.json");
+            if (!File.Exists(configPath))
+                return;
+
+            // {"tests":["chat_multiturn"]} runs only the named tests; anything else runs them all.
+            m_Config = File.ReadAllText(configPath);
+
+            m_Service = LlmService.Instance;
+            await Awaitable.WaitForSecondsAsync(2f);
+            Report("start", true, "");
+
+            await Run("resume_download", TestResumeDownload);
+            await Run("small_download", TestSmallDownload);
+            await Run("gated_without_token", TestGatedWithoutToken);
+            await Run("cancel_and_reset", TestCancelAndReset);
+            await Run("unload_memory", TestUnloadMemory);
+            await Run("chat_multiturn", TestChatMultiTurn);
+            await Run("ask_image", TestAskImage);
+            await Run("garden", TestGarden);
+            await Run("garden_view", TestGardenView);
+            await Run("depth", TestDepth);
+            await Run("depth_ask", TestDepthAsk);
+            await Run("speech", TestSpeech);
+            await Run("depth_place", TestDepthPlace);
+            await Run("depth_garden", TestDepthGarden);
+
+            Report("finished", true, "");
+        }
+
+        async Awaitable Run(string name, Func<Awaitable<string>> test)
+        {
+            if (m_Config.Contains("\"tests\"") && !m_Config.Contains($"\"{name}\""))
+                return;
+
+            try
+            {
+                var detail = await test();
+                Report(name, true, detail);
+            }
+            catch (Exception e)
+            {
+                Report(name, false, e.GetType().Name + ": " + e.Message);
+            }
+        }
+
+        static ModelInfo CloneAs(ModelInfo source, string fileName, long sizeBytes, bool gated)
+        {
+            return new ModelInfo
+            {
+                id = "selftest-" + fileName,
+                displayName = "Self-test " + fileName,
+                repoId = source.repoId,
+                fileName = fileName,
+                commitHash = source.commitHash,
+                sizeBytes = sizeBytes,
+                gated = gated,
+            };
+        }
+
+        async Awaitable<string> TestResumeDownload()
+        {
+            var reference = ModelCatalog.Gemma4E2B;
+            if (ModelStore.GetState(reference) != ModelState.Downloaded)
+                throw new InvalidOperationException("Gemma 4 E2B must be downloaded to compare bytes.");
+
+            // Same remote file as Gemma 4 E2B. It has the same local file name, so every file operation below
+            // must happen inside the scratch root, never the real models folder.
+            var referencePath = ModelStore.GetPath(reference);
+            var test = CloneAs(reference, reference.fileName, reference.sizeBytes, false);
+            var scratchRoot = Path.Combine(Application.temporaryCachePath, "selftest");
+            Directory.CreateDirectory(scratchRoot);
+            ModelStore.SetRootForTests(scratchRoot);
+            try
+            {
+                ModelStore.Delete(test);
+                var first = await DownloadUntil(test, k_ChunkBytes);
+                var firstCode = m_Service.Downloader.LastResponseCode;
+                if (ModelStore.GetState(test) != ModelState.Partial)
+                    throw new Exception("Expected a partial file after cancelling.");
+
+                var second = await DownloadUntil(test, first + k_ChunkBytes);
+                var resumeCode = m_Service.Downloader.LastResponseCode;
+                if (second <= first)
+                    throw new Exception($"Partial file did not grow on resume ({first} -> {second}).");
+                if (resumeCode != 206)
+                    throw new Exception($"Resume answered HTTP {resumeCode}, expected 206.");
+
+                // Bytes around the resume point must match the complete file.
+                var start = first - k_CompareWindow;
+                if (!RangesEqual(ModelStore.GetPartialPath(test), referencePath, start, 2 * k_CompareWindow))
+                    throw new Exception("Bytes around the resume point differ from the reference file.");
+
+                return $"first {first} B (HTTP {firstCode}), resumed to {second} B (HTTP {resumeCode}), {2 * k_CompareWindow} B around offset {first} match the reference";
+            }
+            finally
+            {
+                ModelStore.Delete(test);
+                ModelStore.SetRootForTests(null);
+            }
+        }
+
+        async Awaitable<long> DownloadUntil(ModelInfo model, long targetBytes)
+        {
+            using var cancel = new CancellationTokenSource();
+            var progress = new Progress<DownloadProgress>(p =>
+            {
+                if (p.Bytes >= targetBytes)
+                    cancel.Cancel();
+            });
+
+            try
+            {
+                await m_Service.Downloader.DownloadAsync(model, progress, cancel.Token);
+                throw new Exception("Download finished before it could be cancelled.");
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            return ModelStore.GetPartialBytes(model);
+        }
+
+        static bool RangesEqual(string pathA, string pathB, long offset, int length)
+        {
+            var a = new byte[length];
+            var b = new byte[length];
+            using (var fa = File.OpenRead(pathA))
+            {
+                fa.Seek(offset, SeekOrigin.Begin);
+                if (fa.Read(a, 0, length) != length)
+                    return false;
+            }
+
+            using (var fb = File.OpenRead(pathB))
+            {
+                fb.Seek(offset, SeekOrigin.Begin);
+                if (fb.Read(b, 0, length) != length)
+                    return false;
+            }
+
+            for (var i = 0; i < length; i++)
+            {
+                if (a[i] != b[i])
+                    return false;
+            }
+
+            return true;
+        }
+
+        async Awaitable<string> TestSmallDownload()
+        {
+            // Small file with unknown size: exercises the complete-and-move path.
+            var readme = CloneAs(ModelCatalog.Gemma4E2B, "README.md", 0, false);
+            ModelStore.SetRootForTests(Path.Combine(Application.temporaryCachePath, "selftest"));
+            try
+            {
+                ModelStore.Delete(readme);
+                await m_Service.Downloader.DownloadAsync(readme);
+                if (ModelStore.GetState(readme) != ModelState.Downloaded)
+                    throw new Exception("README.md not marked as downloaded.");
+                if (File.Exists(ModelStore.GetPartialPath(readme)))
+                    throw new Exception("Partial file left behind.");
+                return $"{new FileInfo(ModelStore.GetPath(readme)).Length} B, HTTP {m_Service.Downloader.LastResponseCode}";
+            }
+            finally
+            {
+                ModelStore.Delete(readme);
+                ModelStore.SetRootForTests(null);
+            }
+        }
+
+        async Awaitable<string> TestGatedWithoutToken()
+        {
+            if (ModelStore.HuggingFaceToken != null)
+                return "skipped: a token is installed";
+
+            // Marked not gated so the request reaches Hugging Face and the 401 path runs.
+            var gated = CloneAs(ModelCatalog.TinyGarden, ModelCatalog.TinyGarden.fileName, ModelCatalog.TinyGarden.sizeBytes, false);
+            gated.repoId = ModelCatalog.TinyGarden.repoId;
+            var scratchRoot = Path.Combine(Application.temporaryCachePath, "selftest");
+            ModelStore.SetRootForTests(scratchRoot);
+            try
+            {
+                ModelStore.Delete(gated);
+                try
+                {
+                    await m_Service.Downloader.DownloadAsync(gated);
+                }
+                catch (ModelAccessException e)
+                {
+                    if (File.Exists(ModelStore.GetPartialPath(gated)))
+                        throw new Exception("Error body left in the partial file.");
+                    return $"HTTP {m_Service.Downloader.LastResponseCode}: {e.Message}";
+                }
+
+                throw new Exception("Gated download succeeded without a token.");
+            }
+            finally
+            {
+                ModelStore.Delete(gated);
+                ModelStore.SetRootForTests(null);
+            }
+        }
+
+        async Awaitable<string> TestCancelAndReset()
+        {
+            await m_Service.LoadAsync(ModelCatalog.Gemma4E2B);
+            var engine = m_Service.Engine;
+            m_Service.NewConversation();
+
+            // 1. Cancel a long answer shortly after it starts streaming.
+            var turn = new Turn(engine);
+            engine.Send("Count from 1 to 300, separated by commas.");
+            while (turn.Text.Length == 0 && !turn.Done)
+                await Awaitable.NextFrameAsync();
+            await Awaitable.WaitForSecondsAsync(1.5f);
+            var cancelAt = Time.realtimeSinceStartup;
+            engine.Cancel();
+            var cancelled = await turn.WaitAsync(10f);
+            var stopLatency = Time.realtimeSinceStartup - cancelAt;
+            if (!cancelled.cancelled)
+                throw new Exception("Turn finished without the cancelled flag.");
+
+            // 2. The conversation keeps working after a stop.
+            turn = new Turn(engine);
+            engine.Send("Reply with only the word: hello");
+            var after = await turn.WaitAsync(30f);
+            if (after.cancelled || turn.Text.ToString().Trim().Length == 0)
+                throw new Exception("No answer after cancel.");
+            var kvBeforeReset = after.kvTokens;
+            var answerAfterStop = turn.Text.ToString().Trim();
+
+            // 3. Reset drops the history.
+            m_Service.NewConversation();
+            turn = new Turn(engine);
+            engine.Send("Reply with only the word: ok");
+            var reset = await turn.WaitAsync(30f);
+            if (reset.kvTokens >= kvBeforeReset)
+                throw new Exception($"KV cache not cleared by reset ({kvBeforeReset} -> {reset.kvTokens}).");
+
+            return $"stopped in {stopLatency:0.00}s after {cancelled.decodeChunks} chunks; answer after stop \"{answerAfterStop}\"; KV {kvBeforeReset} -> {reset.kvTokens} after reset; decode {after.decodeTokPerSec:0.0} tok/s";
+        }
+
+        async Awaitable<string> TestUnloadMemory()
+        {
+            var gemma = await m_Service.LoadAsync(ModelCatalog.Gemma4E2B);
+            var gemmaPss = gemma.pssMb;
+            m_Service.Unload();
+            await Awaitable.WaitForSecondsAsync(2f);
+
+            if (ModelStore.GetState(ModelCatalog.TinyGarden) != ModelState.Downloaded)
+                return $"Gemma loaded {gemmaPss} MB; Tiny Garden not downloaded, skipped reload";
+
+            var garden = await m_Service.LoadAsync(ModelCatalog.TinyGarden);
+            m_Service.Unload();
+            if (garden.pssMb >= gemmaPss)
+                throw new Exception($"Memory not released: Gemma {gemmaPss} MB, Tiny Garden after unload {garden.pssMb} MB.");
+            return $"Gemma loaded {gemmaPss} MB -> unload -> Tiny Garden loaded {garden.pssMb} MB";
+        }
+
+        // Drives the AI Chat panel like a user: two dependent turns, then resume the saved thread from disk.
+        // Leaves the chat open on the test thread for a screenshot.
+        async Awaitable<string> TestChatMultiTurn()
+        {
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            var chat = app.Chat;
+            app.OpenChat();
+            chat.NewChat();
+
+            var first = await ChatTurnAsync(chat, "My name is Ada and my favorite color is teal. Reply with one short sentence.");
+            var second = await ChatTurnAsync(chat, "What is my favorite color? Answer with one word.");
+            if (!second.text.ToLowerInvariant().Contains("teal"))
+                throw new Exception($"Second turn lost context: \"{second.text}\"");
+
+            var id = chat.CurrentThread.id;
+            chat.NewChat();
+            var saved = ChatThreadStore.Load(id);
+            if (saved == null || saved.messages.Count != 4)
+                throw new Exception($"Thread not saved with 4 messages ({saved?.messages.Count}).");
+
+            chat.OpenThread(saved);
+            var resumed = await ChatTurnAsync(chat, "What is my name? Answer with one word.");
+            if (!resumed.text.Contains("Ada"))
+                throw new Exception($"Resumed thread lost context: \"{resumed.text}\"");
+
+            return $"turn1 TTFT {first.stats.ttftSec:0.00}s {first.stats.decodeTokPerSec:0.0} tok/s; turn2 \"{second.text.Trim()}\" KV {second.stats.kvTokens}; " +
+                $"resumed \"{resumed.text.Trim()}\" TTFT {resumed.stats.ttftSec:0.00}s KV {resumed.stats.kvTokens}";
+        }
+
+        // Opens Point & Ask, captures the region straight ahead and asks about it. Copies the crop and the full frame
+        // to persistentDataPath (selftest_crop.png, selftest_frame.png) to check orientation. Leaves the card open.
+        async Awaitable<string> TestAskImage()
+        {
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            var ask = app.AskImage;
+            if (app.Chat.IsOpen)
+                app.Chat.Close();
+            app.OpenAskImage();
+
+            var deadline = Time.realtimeSinceStartup + 120f;
+            while (!ask.IsReady && Time.realtimeSinceStartup < deadline)
+                await Awaitable.NextFrameAsync();
+            if (!ask.IsReady)
+                throw new TimeoutException("Point & Ask never became ready (model or camera).");
+
+            AskResult result = null;
+            void OnFinished(AskResult r) => result = r;
+            ask.AnswerFinished += OnFinished;
+            try
+            {
+                ask.AskInFront("What is in this image? Answer in one sentence.");
+                while (result == null && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+            }
+            finally
+            {
+                ask.AnswerFinished -= OnFinished;
+            }
+
+            if (result == null)
+                throw new TimeoutException("No answer.");
+            if (result.Error != null)
+                throw new LlmException(result.Error);
+
+            File.Copy(result.ImagePath, Path.Combine(Application.persistentDataPath, "selftest_crop.png"), true);
+            var camera = FindAnyObjectByType<PassthroughFrameCapture>();
+            camera.CaptureToFile(Path.Combine(Application.persistentDataPath, "selftest_frame.png"));
+            return $"crop {result.Crop.x},{result.Crop.y} {result.Crop.width}x{result.Crop.height} of {camera.Resolution.x}x{camera.Resolution.y}; " +
+                $"TTFT {result.Stats.ttftSec:0.00}s {result.Stats.decodeTokPerSec:0.0} tok/s; answer \"{result.Answer.Trim()}\"";
+        }
+
+        // Plays Tabletop Garden through the model: all three tools, pointing ("these", "here") through a simulated
+        // selection, growth through Tick, and the special-seed unlock. Leaves the garden open for a screenshot.
+        async Awaitable<string> TestGarden()
+        {
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            if (app.AskImage.IsOpen)
+                app.AskImage.Close();
+            if (app.Chat.IsOpen)
+                app.Chat.Close();
+            app.OpenGarden();
+
+            var panel = app.Garden;
+            var state = panel.State;
+            var log = new StringBuilder();
+            var deadline = Time.realtimeSinceStartup + 60f;
+            while (!panel.IsReady && Time.realtimeSinceStartup < deadline)
+                await Awaitable.NextFrameAsync();
+            if (!panel.IsReady)
+                throw new TimeoutException("Garden model never became ready.");
+            panel.ResetGarden();
+
+            async Awaitable Step(string text, int[] pointAt, Func<bool> check)
+            {
+                if (pointAt != null)
+                    panel.Garden.SetSelection(pointAt);
+
+                GardenCommandResult result = null;
+                void OnFinished(GardenCommandResult r) => result = r;
+                panel.CommandFinished += OnFinished;
+                try
+                {
+                    panel.Submit(text);
+                    var stepDeadline = Time.realtimeSinceStartup + 30f;
+                    while (result == null && Time.realtimeSinceStartup < stepDeadline)
+                        await Awaitable.NextFrameAsync();
+                }
+                finally
+                {
+                    panel.CommandFinished -= OnFinished;
+                }
+
+                if (result == null)
+                    throw new TimeoutException($"No result for \"{text}\".");
+                var calls = string.Join(" ", result.Calls);
+                log.Append($"[{text}{(result.ResolvedText != text ? " => " + result.ResolvedText : "")}] {calls} {result.Stats?.totalSec:0.0}s; ");
+                if (result.Error != null || !check())
+                    throw new Exception($"\"{text}\" -> {calls}; events: {string.Join(", ", result.Events)}. Log so far: {log}");
+            }
+
+            bool All(PlotStage stage, Seed seed, params int[] plots) => plots.All(p => state[p].stage == stage && state[p].seed == seed);
+
+            await Step("plant sunflowers in the top row", null, () => All(PlotStage.Seed, Seed.Sunflower, 1, 2, 3));
+            await Step("water the top row", null, () => All(PlotStage.Sprout, Seed.Sunflower, 1, 2, 3));
+            state.Tick(GardenState.GrowSeconds);
+            await Step("water these", new[] { 1, 2, 3 }, () => All(PlotStage.Bud, Seed.Sunflower, 1, 2, 3));
+            state.Tick(GardenState.GrowSeconds);
+            await Step("plant a rose here", new[] { 5 }, () => All(PlotStage.Seed, Seed.Rose, 5));
+            await Step("harvest the top row", null, () => state.HarvestedCount(Seed.Sunflower) == 3 && state.SpecialUnlocked);
+            await Step("plant the special seed in plot 9", null, () => All(PlotStage.Seed, Seed.Special, 9));
+            await Step("water plots 5 and 9", null, () => All(PlotStage.Sprout, Seed.Rose, 5) && All(PlotStage.Sprout, Seed.Special, 9));
+            return log.ToString();
+        }
+
+        // Screenshot staging, not a model test: puts every growth stage on the planter and lifts it into view of a
+        // headset lying on a desk.
+        async Awaitable<string> TestGardenView()
+        {
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            if (!app.Garden.IsOpen)
+                app.OpenGarden();
+
+            var state = app.Garden.State;
+            state.Reset();
+            state.Plant(Seed.Sunflower, new[] { 1, 4 });
+            state.Plant(Seed.Daisy, new[] { 2, 5 });
+            state.Plant(Seed.Rose, new[] { 3, 6 });
+            state.Plant(Seed.Daisy, new[] { 7 });
+            state.Plant(Seed.Rose, new[] { 8 });
+            state.Water(new[] { 1, 2, 3, 4, 5, 6 });
+            state.Tick(GardenState.GrowSeconds);
+            state.Water(new[] { 1, 2, 3 });
+            state.Tick(GardenState.GrowSeconds);
+            state.Water(new[] { 4 });
+            state.Water(new[] { 8 });
+            app.Garden.Garden.SetSelection(new[] { 5 });
+
+            var head = Camera.main.transform;
+            var forward = Vector3.ProjectOnPlane(head.forward, Vector3.up).normalized;
+            app.Garden.Garden.Place(head.position + forward * 0.65f + Vector3.down * 0.3f, -forward);
+            await Awaitable.WaitForSecondsAsync(1f);
+            return "row 1 flowers, plot 4 bud, plots 5-6 thirsty, plot 7 seed, plot 8 sprout, plot 9 empty, plot 5 selected";
+        }
+
+        // Depth is ready and answers: a ray straight ahead and a 7x7 grid over the view.
+        async Awaitable<string> TestDepth()
+        {
+            var depth = DepthService.Instance;
+            if (depth == null)
+                throw new Exception("No DepthService in the scene.");
+            if (!depth.IsSupported)
+                throw new Exception("Environment raycast not supported.");
+            var started = Time.realtimeSinceStartup;
+            if (!await depth.WaitUntilReadyAsync(20f))
+                throw new TimeoutException("Depth never became ready (scene permission?).");
+            var readySec = Time.realtimeSinceStartup - started;
+
+            var head = Camera.main.transform;
+            depth.Raycast(new Ray(head.position, head.forward), out var hit);
+            var hits = 0;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (var x = -3; x <= 3; x++)
+            for (var y = -3; y <= 3; y++)
+                if (depth.Raycast(new Ray(head.position, Quaternion.Euler(y * 5f, x * 5f, 0f) * head.forward), out _))
+                    hits++;
+            var gridMs = sw.Elapsed.TotalMilliseconds;
+            return $"ready after {readySec:0.0}s; ahead {hit.status} at {Vector3.Distance(head.position, hit.point):0.00} m, normal {hit.normal}, confidence {hit.normalConfidence:0.00}; 49-ray grid {hits} hits in {gridMs:0.0} ms";
+        }
+
+        // Exit criterion: measurements reach the answer. Captures straight ahead with a size question.
+        async Awaitable<string> TestDepthAsk()
+        {
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            if (app.Garden.IsOpen)
+                app.Garden.Close();
+            if (app.Chat.IsOpen)
+                app.Chat.Close();
+            if (!app.AskImage.IsOpen)
+                app.OpenAskImage();
+            var ask = app.AskImage;
+
+            var deadline = Time.realtimeSinceStartup + 120f;
+            while (!ask.IsReady && Time.realtimeSinceStartup < deadline)
+                await Awaitable.NextFrameAsync();
+            if (!ask.IsReady)
+                throw new TimeoutException("Point & Ask never became ready.");
+
+            AskResult result = null;
+            void OnFinished(AskResult r) => result = r;
+            ask.AnswerFinished += OnFinished;
+            try
+            {
+                ask.AskInFront("What is the main object here, and roughly how big is it?");
+                while (result == null && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+            }
+            finally
+            {
+                ask.AnswerFinished -= OnFinished;
+            }
+
+            if (result == null)
+                throw new TimeoutException("No answer.");
+            if (result.Error != null)
+                throw new LlmException(result.Error);
+            File.Copy(result.ImagePath, Path.Combine(Application.persistentDataPath, "selftest_depth_crop.png"), true);
+            if (result.Depth == null)
+                throw new Exception("No depth measurement for the capture.");
+            var metric = System.Text.RegularExpressions.Regex.IsMatch(result.Answer, @"\d+(\.\d+)?\s*(cm|centimet|m\b|meter|metre|inch)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            var detail = $"crop {result.Crop.width}x{result.Crop.height} ({result.Depth.Cells} cells{(result.Depth.FillsFrame ? ", fills frame" : "")}); facts \"{result.Facts}\"; answer \"{result.Answer.Trim()}\"";
+            if (!metric)
+                throw new Exception("Answer has no measurement. " + detail);
+            return detail;
+        }
+
+        // PlaceBox sweep toward the floor, for a headset lying on a desk (it can't look down at a table like a
+        // user). Reports every angle; passes if any footprint fits somewhere.
+        async Awaitable<string> TestDepthPlace()
+        {
+            var depth = DepthService.Instance;
+            if (depth == null || !await depth.WaitUntilReadyAsync(20f))
+                throw new Exception("Depth not ready.");
+
+            var head = Camera.main.transform;
+            var forward = Vector3.ProjectOnPlane(head.forward, Vector3.up).normalized;
+            var right = Vector3.Cross(Vector3.up, forward);
+            var log = new StringBuilder();
+            var placed = 0;
+            foreach (var size in new[] { 0.46f, 0.3f })
+            for (var pitch = 10; pitch <= 40; pitch += 3)
+            {
+                var ray = new Ray(head.position, Quaternion.AngleAxis(pitch, right) * forward);
+                if (depth.PlaceBox(ray, new Vector3(size, size, 0.02f), forward, out var hit))
+                {
+                    placed++;
+                    log.Append($"{size * 100:0}cm@{pitch}°: fit n.y {hit.normal.y:0.00} at {Vector3.Distance(head.position, hit.point):0.00} m; ");
+                }
+                else
+                {
+                    depth.Raycast(ray, out var probe);
+                    log.Append($"{size * 100:0}cm@{pitch}°: {probe.status} n.y {probe.normal.y:0.00}; ");
+                }
+            }
+
+            if (placed == 0)
+                throw new Exception("No PlaceBox fit at any angle. " + log);
+            return $"{placed} fits. {log}";
+        }
+
+        // On-device text to speech: the engine binds, speaks a sentence, and reads a streamed chat reply sentence by
+        // sentence, starting before the reply finishes.
+        async Awaitable<string> TestSpeech()
+        {
+            var speech = SpeechEngine.Instance;
+            if (speech == null)
+                throw new Exception("No SpeechEngine in the scene.");
+            speech.Enabled = true;
+
+            // The neural voice: download it if missing (Quest's system engine is disabled).
+            var download = "";
+            var voice = VoiceCatalog.Default;
+            if (VoiceStore.GetState(voice) != ModelState.Downloaded)
+            {
+                var downloadStart = Time.realtimeSinceStartup;
+                await speech.Downloader.DownloadAsync(voice);
+                download = $"voice downloaded in {Time.realtimeSinceStartup - downloadStart:0}s; ";
+            }
+
+            if (!speech.IsNeural)
+                speech.SelectEngine();
+            var deadline = Time.realtimeSinceStartup + 30f;
+            while (!speech.IsReady && Time.realtimeSinceStartup < deadline)
+                await Awaitable.NextFrameAsync();
+            if (!speech.IsReady)
+                throw new TimeoutException("Speech engine never became ready: " + speech.Info);
+
+            var started = false;
+            void OnStarted() => started = true;
+            speech.UtteranceStarted += OnStarted;
+            var spokenAt = Time.realtimeSinceStartup;
+            var frameStart = Time.frameCount;
+            speech.Speak("Hello from X R A I Edge. This sentence checks the frame rate while the voice is synthesized.", interrupt: true);
+            while (!started && Time.realtimeSinceStartup < spokenAt + 5f)
+                await Awaitable.NextFrameAsync();
+            speech.UtteranceStarted -= OnStarted;
+            if (!started)
+                throw new Exception("No audio started. " + speech.Info);
+            var startLatency = Time.realtimeSinceStartup - spokenAt;
+            while (speech.IsSpeaking && Time.realtimeSinceStartup < spokenAt + 20f)
+                await Awaitable.NextFrameAsync();
+            var sentenceSec = Time.realtimeSinceStartup - spokenAt;
+            var fps = (Time.frameCount - frameStart) / Mathf.Max(0.01f, sentenceSec);
+
+            // A chat reply: speech should start while the reply is still streaming.
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            if (!app.Chat.IsOpen)
+                app.OpenChat();
+            app.Chat.NewChat();
+            var before = speech.UtteranceCount;
+            var reply = await ChatTurnAsync(app.Chat, "Name three planets and one fact about each, in three short sentences.");
+            var utterances = speech.UtteranceCount - before;
+            var latency = speech.LastReplyAudioLatency;
+            if (utterances == 0 || latency < 0f)
+                throw new Exception($"Reply was not spoken ({utterances} utterances, latency {latency}).");
+            var streamed = latency < reply.stats.totalSec;
+            return $"{download}{speech.Info}; first sentence audio after {startLatency:0.00}s, done in {sentenceSec:0.0}s at {fps:0} fps; " +
+                $"chat reply ({reply.stats.totalSec:0.0}s to generate) spoken as {utterances} utterances, audio after {latency:0.00}s" +
+                (streamed ? " (before the reply finished)" : "");
+        }
+
+        // Exit criterion: the garden lands on a real surface at once.
+        async Awaitable<string> TestDepthGarden()
+        {
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            if (app.AskImage.IsOpen)
+                app.AskImage.Close();
+            if (!app.Garden.IsOpen)
+                app.OpenGarden();
+            await app.Garden.PlaceGardenAsync();
+            if (!app.Garden.PlacedOnSurface)
+                throw new Exception(app.Garden.PlacementNote);
+            return app.Garden.PlacementNote;
+        }
+
+        static async Awaitable<ChatMessage> ChatTurnAsync(ChatPanel chat, string text)
+        {
+            var deadline = Time.realtimeSinceStartup + 90f;
+            while (!chat.IsReady && Time.realtimeSinceStartup < deadline)
+                await Awaitable.NextFrameAsync();
+            if (!chat.IsReady)
+                throw new TimeoutException("Chat never became ready.");
+
+            ChatMessage reply = null;
+            void OnFinished(ChatMessage message) => reply = message;
+            chat.ResponseFinished += OnFinished;
+            try
+            {
+                chat.Submit(text);
+                while (reply == null && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+            }
+            finally
+            {
+                chat.ResponseFinished -= OnFinished;
+            }
+
+            if (reply == null || reply.stats == null)
+                throw new Exception($"No answer to \"{text}\".");
+            return reply;
+        }
+
+        /// <summary>Collects one streamed turn from the engine.</summary>
+        class Turn
+        {
+            readonly LlmEngine m_Engine;
+            public readonly StringBuilder Text = new StringBuilder();
+            public bool Done;
+            LlmStats m_Stats;
+            string m_Error;
+
+            public Turn(LlmEngine engine)
+            {
+                m_Engine = engine;
+                m_Engine.TokenReceived += OnToken;
+                m_Engine.ResponseDone += OnDone;
+                m_Engine.Failed += OnFailed;
+            }
+
+            void OnToken(string text) => Text.Append(text);
+
+            void OnDone(LlmStats stats)
+            {
+                m_Stats = stats;
+                Finish();
+            }
+
+            void OnFailed(string error)
+            {
+                m_Error = error;
+                Finish();
+            }
+
+            void Finish()
+            {
+                Done = true;
+                m_Engine.TokenReceived -= OnToken;
+                m_Engine.ResponseDone -= OnDone;
+                m_Engine.Failed -= OnFailed;
+            }
+
+            public async Awaitable<LlmStats> WaitAsync(float timeoutSec)
+            {
+                var deadline = Time.realtimeSinceStartup + timeoutSec;
+                while (!Done && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+
+                if (!Done)
+                    throw new TimeoutException($"No response within {timeoutSec}s.");
+                if (m_Error != null)
+                    throw new LlmException(m_Error);
+                return m_Stats;
+            }
+        }
+
+        static void Report(string test, bool pass, string detail)
+        {
+            var line = $"SELFTEST|{{\"test\":\"{test}\",\"pass\":{(pass ? "true" : "false")},\"detail\":\"{detail.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", " ")}\"}}";
+            Debug.Log(line);
+
+            // Also kept in a file: the headset's log buffer can rotate before long tests finish.
+            var resultsPath = Path.Combine(Application.persistentDataPath, "selftest_results.txt");
+            if (test == "start")
+                File.Delete(resultsPath);
+            File.AppendAllText(resultsPath, line + "\n");
+        }
+    }
+}

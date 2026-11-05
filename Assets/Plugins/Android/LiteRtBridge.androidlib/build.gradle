@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.library'
+    // Unity's Gradle setup has android.builtInKotlin=false, so the bridge applies Kotlin itself,
+    // using the Kotlin Gradle plugin that AGP already puts on the classpath.
+    id 'org.jetbrains.kotlin.android'
+}
+
+dependencies {
+    // On-device LLM runtime used by Google AI Edge Gallery. Ships Java 21 bytecode, hence the Kotlin bridge.
+    implementation 'com.google.ai.edge.litertlm:litertlm-android:0.18.1'
+    // Offline neural text to speech (k2-fsa/sherpa-onnx v1.13.8, Apache-2.0): the Kotlin API from the release's
+    // static-link AAR (sherpa-onnx-static-link-onnxruntime-1.13.8.aar). Its arm64 native library is in jniLibs/.
+    implementation files('libs/sherpa-onnx-1.13.8.jar')
+}
+
+android {
+    namespace "com.xraiedge.litertlm"
+    // Keep at the app's compile SDK: a higher value here is propagated to :unityLibrary via AAR metadata.
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 31
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile 'AndroidManifest.xml'
+            java.srcDirs = ['src']
+            jniLibs.srcDirs = ['jniLibs']
+        }
+    }
+
+    lint {
+        abortOnError false
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+        // LiteRT-LM is built with a newer Kotlin than the compiler bundled with AGP.
+        freeCompilerArgs.add('-Xskip-metadata-version-check')
+    }
+}

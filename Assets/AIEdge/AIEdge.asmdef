@@ -1,0 +1,21 @@
+{
+    "name": "AIEdge",
+    "rootNamespace": "AIEdge",
+    "references": [
+        "Unity.TextMeshPro",
+        "UnityEngine.UI",
+        "Unity.XR.Interaction.Toolkit",
+        "meta.xr.mrutilitykit",
+        "Unity.XR.Hands",
+        "MRTemplate"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
