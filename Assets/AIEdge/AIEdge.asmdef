@@ -7,6 +7,7 @@
         "Unity.XR.Interaction.Toolkit",
         "meta.xr.mrutilitykit",
         "Unity.XR.Hands",
+        "Unity.InputSystem",
         "MRTemplate"
     ],
     "includePlatforms": [],

@@ -2,7 +2,7 @@
 
 On-device generative AI in mixed reality on **Meta Quest 3 / 3S**. This is a spatial port of three experiences from
 [Google AI Edge Gallery](https://github.com/google-ai-edge/gallery): **AI Chat**, **Ask Image** and **Tiny Garden**.
-Each one is rebuilt for passthrough, hand tracking and the Meta Depth API. Everything runs on the headset: the
+Each one is rebuilt for passthrough, hand tracking and the Meta Depth API, and a fourth experience, **What's That?**, is new. Everything runs on the headset: the
 language models, the image questions and the voice. Nothing is sent to a server.
 
 | Experience | What it does in MR |
@@ -10,11 +10,12 @@ language models, the image questions and the voice. Nothing is sent to a server.
 | **Spatial Chat** | Multi-turn chat with Gemma 4 E2B on a world-locked panel. Replies stream in and are read aloud. Past conversations are cards you can grab to resume. |
 | **Point & Ask** | Frame something in the real world with both hands (or point at it) and ask about it. The crop from the passthrough camera goes to Gemma 4 E2B with the question. The answer is pinned in space next to the object. Depth adds real measurements to the prompt ("about 34 cm wide, 1.1 m away"), so you can ask about size and fit. |
 | **Tabletop Garden** | A 3×3 planter placed on a real table with depth. You garden by voice or keyboard through the Gallery's FunctionGemma 270M Tiny Garden model (plant, water, harvest). You can also point ("water *these*") or play by hand with a watering can, seed packets, and pulling flowers. |
+| **What's That?** | Point at something in the room, with your index finger (hold still for a moment) or with a controller (pull the trigger). A ray and a reticle show where depth finds a real surface, with the live distance. Gemma names the object and describes it briefly, in English or Italian. The card pinned beside the object and the spoken reply give its distance from you, measured by depth rather than guessed. |
 
 The project is built on the open-source on-device AI stack from [Google AI Edge](https://github.com/google-ai-edge):
 the Gallery app's experiences, the LiteRT-LM runtime, and the LiteRT-LM models published for it.
 
-Replies in all three experiences can be spoken by neural voices (Piper, through sherpa-onnx), in **English** and
+Replies in every experience can be spoken by neural voices (Piper, through sherpa-onnx), in **English** and
 **Italian**. Each reply is read by the voice of its language, detected from the text. Ask in Italian and Gemma answers
 in Italian, read by the Italian voice. The system text-to-speech engine on Quest is disabled.
 
@@ -76,7 +77,7 @@ Assets/AIEdge/                 All port code (asmdef AIEdge, namespace AIEdge)
   Core/                        LLM engine and service, model catalog/downloader/store, speech engine, voice pack, language detection
   Camera/                      Passthrough camera capture and crops
   Spatial/                     Depth service, depth-based measurement and placement
-  Experiences/Chat|AskImage|TinyGarden/
+  Experiences/Chat|AskImage|TinyGarden|WhatsThat/
   UI/                          Launcher, UI factory, Markdown → TextMeshPro, voice toggle
   Diagnostics/SelfTest.cs      On-device self-tests
   Tests/Editor/                EditMode unit tests
@@ -108,6 +109,7 @@ Notes:
 2. The available tests are:
    - Downloads: `resume_download`, `small_download`, `gated_without_token`, `cancel_and_reset`, `unload_memory`
    - Chat and Point & Ask: `chat_multiturn`, `ask_image`
+   - What's That?: `whats_that`
    - Garden: `garden`, `garden_view`
    - Depth: `depth`, `depth_ask`, `depth_place`, `depth_garden`
    - Voice: `speech`, `speech_it`

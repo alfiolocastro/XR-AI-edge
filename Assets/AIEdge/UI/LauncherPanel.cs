@@ -9,7 +9,7 @@ using UnityEngine.UI;
 namespace AIEdge.UI
 {
     /// <summary>
-    /// Home panel: the experiences (AI Chat, Ask Image, Tiny Garden), the model manager
+    /// Home panel: the experiences (AI Chat, Point &amp; Ask, Tabletop Garden, What's That?), the model manager
     /// (download with resume, cancel, delete, load/unload, memory) and the neural voice for spoken replies. Built in code with <see cref="UiFactory"/>.
     /// </summary>
     public class LauncherPanel : MonoBehaviour
@@ -17,6 +17,7 @@ namespace AIEdge.UI
         const float k_Width = 900f;
         const float k_Height = 1030f;
         const float k_VoiceRowHeight = 100f;
+        const int k_ExperienceCount = 4;
         const float k_RefreshInterval = 0.25f;
 
         [SerializeField, Tooltip("Model service. Uses LlmService.Instance if empty.")]
@@ -75,6 +76,7 @@ namespace AIEdge.UI
             SetExperience(0, "AI Chat", "Coming in Phase 2", null);
             SetExperience(1, "Ask Image", "Coming in Phase 3", null);
             SetExperience(2, "Tiny Garden", "Coming in Phase 4", null);
+            SetExperience(3, "What's That?", "Coming soon", null);
             Invoke(nameof(Recenter), 1f); // let head tracking settle
         }
 
@@ -102,11 +104,11 @@ namespace AIEdge.UI
         public void Recenter() => UiFactory.PlaceInFront(transform, m_Distance);
 
         /// <summary>Sets an experience tile. A null <paramref name="open"/> shows it as unavailable.</summary>
-        /// <param name="index">0 = AI Chat, 1 = Ask Image, 2 = Tiny Garden.</param>
+        /// <param name="index">0 = AI Chat, 1 = Point &amp; Ask, 2 = Tabletop Garden, 3 = What's That?.</param>
         public void SetExperience(int index, string title, string subtitle, Action open)
         {
             var tile = m_Tiles[index];
-            tile.Label.text = $"{title}\n<size=18><color=#B3BACC>{subtitle}</color></size>";
+            tile.Label.text = $"{title}\n<size=16><color=#B3BACC>{subtitle}</color></size>";
             tile.Open = open;
             tile.Button.interactable = open != null;
         }
@@ -123,11 +125,11 @@ namespace AIEdge.UI
 
             var experiences = UiFactory.CreateText(m_Panel, "ExperiencesHeader", "Experiences", 26);
             UiFactory.Place(experiences.rectTransform, 32, 124, 400, 34);
-            for (var i = 0; i < 3; i++)
+            for (var i = 0; i < k_ExperienceCount; i++)
             {
                 var tile = new ExperienceTile();
-                tile.Button = UiFactory.CreateButton(m_Panel, $"Experience{i}", UiFactory.CardColor, () => tile.Open?.Invoke(), 28);
-                UiFactory.Place((RectTransform)tile.Button.transform, 32 + i * 284, 164, 268, 110);
+                tile.Button = UiFactory.CreateButton(m_Panel, $"Experience{i}", UiFactory.CardColor, () => tile.Open?.Invoke(), 25);
+                UiFactory.Place((RectTransform)tile.Button.transform, 32 + i * 212, 164, 200, 110);
                 tile.Label = tile.Button.GetComponentInChildren<TextMeshProUGUI>();
                 m_Tiles.Add(tile);
             }

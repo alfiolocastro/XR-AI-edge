@@ -3,6 +3,7 @@ using AIEdge.Chat;
 using AIEdge.Spike;
 using AIEdge.TinyGarden;
 using AIEdge.UI;
+using AIEdge.WhatsThat;
 using UnityEngine;
 using UnityEngine.XR.Templates.MR;
 
@@ -28,6 +29,9 @@ namespace AIEdge
         [SerializeField, Tooltip("Tabletop Garden (Tiny Garden) experience.")]
         GardenPanel m_Garden;
 
+        [SerializeField, Tooltip("What's That? (point at an object) experience. Created at start if empty.")]
+        WhatsThatPanel m_WhatsThat;
+
         [SerializeField, Tooltip("The template's AR feature hub. Uses the one in the scene if empty.")]
         ARFeatureController m_ArFeatures;
 
@@ -39,6 +43,15 @@ namespace AIEdge
 
         /// <summary>The Tabletop Garden experience.</summary>
         public GardenPanel Garden => m_Garden;
+
+        /// <summary>The What's That? experience.</summary>
+        public WhatsThatPanel WhatsThat => m_WhatsThat;
+
+        void Awake()
+        {
+            if (m_WhatsThat == null)
+                m_WhatsThat = new GameObject("WhatsThat").AddComponent<WhatsThatPanel>();
+        }
 
         async void Start()
         {
@@ -54,6 +67,7 @@ namespace AIEdge
             m_Launcher.SetExperience(0, "AI Chat", "Multi-turn chat with Gemma", OpenChat);
             m_Launcher.SetExperience(1, "Point & Ask", "Frame something, ask about it", OpenAskImage);
             m_Launcher.SetExperience(2, "Tabletop Garden", "Grow flowers by voice and hand", OpenGarden);
+            m_Launcher.SetExperience(3, "What's That?", "Point at an object to name it", OpenWhatsThat);
         }
 
         void OnEnable()
@@ -63,6 +77,7 @@ namespace AIEdge
             m_Chat.Closed += OnExperienceClosed;
             m_AskImage.Closed += OnExperienceClosed;
             m_Garden.Closed += OnExperienceClosed;
+            m_WhatsThat.Closed += OnExperienceClosed;
         }
 
         void OnDisable()
@@ -72,6 +87,7 @@ namespace AIEdge
             m_Chat.Closed -= OnExperienceClosed;
             m_AskImage.Closed -= OnExperienceClosed;
             m_Garden.Closed -= OnExperienceClosed;
+            m_WhatsThat.Closed -= OnExperienceClosed;
         }
 
         /// <summary>Hides the launcher and opens AI Chat.</summary>
@@ -93,6 +109,13 @@ namespace AIEdge
         {
             m_Launcher.SetVisible(false);
             m_Garden.Open();
+        }
+
+        /// <summary>Hides the launcher and opens What's That?.</summary>
+        public void OpenWhatsThat()
+        {
+            m_Launcher.SetVisible(false);
+            m_WhatsThat.Open();
         }
 
         void OnBenchmarkRequested()

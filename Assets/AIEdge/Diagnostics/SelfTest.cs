@@ -7,6 +7,7 @@ using AIEdge.AskImage;
 using AIEdge.Chat;
 using AIEdge.Spatial;
 using AIEdge.TinyGarden;
+using AIEdge.WhatsThat;
 using UnityEngine;
 
 namespace AIEdge.Diagnostics
@@ -52,6 +53,7 @@ namespace AIEdge.Diagnostics
             await Run("depth_ask", TestDepthAsk);
             await Run("speech", TestSpeech);
             await Run("speech_it", TestSpeechItalian);
+            await Run("whats_that", TestWhatsThat);
             await Run("depth_place", TestDepthPlace);
             await Run("depth_garden", TestDepthGarden);
 
@@ -666,6 +668,69 @@ namespace AIEdge.Diagnostics
                 throw new Exception($"English sentence spoken in '{english}'.");
             return $"{download}{speech.Info}; Italian reply spoken as {utterances} utterances by the Italian voice, " +
                 $"audio after {latency:0.00}s; English sentence switched back to English; {fps:0} fps";
+        }
+
+        // What's That?: point straight ahead (the gaze ray stands in for a hand), and Gemma names what depth found
+        // there; the card and the spoken reply carry the measured distance. Repeated in Italian.
+        async Awaitable<string> TestWhatsThat()
+        {
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            foreach (var open in new Action[] { () => { if (app.Chat.IsOpen) app.Chat.Close(); }, () => { if (app.AskImage.IsOpen) app.AskImage.Close(); }, () => { if (app.Garden.IsOpen) app.Garden.Close(); } })
+                open();
+            var panel = app.WhatsThat;
+            if (!panel.IsOpen)
+                app.OpenWhatsThat();
+
+            var deadline = Time.realtimeSinceStartup + 120f;
+            while (!panel.IsReady && Time.realtimeSinceStartup < deadline)
+                await Awaitable.NextFrameAsync();
+            if (!panel.IsReady)
+                throw new TimeoutException("What's That? never became ready.");
+
+            var report = new StringBuilder();
+            var speech = SpeechEngine.Instance;
+            foreach (var language in new[] { SpeechLanguage.English, SpeechLanguage.Italian })
+            {
+                panel.Language = language;
+                WhatsThatResult result = null;
+                void OnFinished(WhatsThatResult r) => result = r;
+                panel.AnswerFinished += OnFinished;
+                var head = Camera.main.transform;
+                // Slightly below eye level, where objects usually are.
+                var ray = new Ray(head.position, Quaternion.AngleAxis(15f, head.right) * head.forward);
+                var before = speech != null ? speech.UtteranceCount : 0;
+                if (!panel.AskAlong(ray))
+                {
+                    panel.AnswerFinished -= OnFinished;
+                    throw new Exception("Depth found nothing straight ahead.");
+                }
+
+                deadline = Time.realtimeSinceStartup + 90f;
+                while (result == null && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+                panel.AnswerFinished -= OnFinished;
+                if (result == null)
+                    throw new TimeoutException("No answer.");
+                if (result.Error != null)
+                    throw new Exception(result.Error);
+                if (string.IsNullOrWhiteSpace(result.Name))
+                    throw new Exception("The answer has no name: " + result.Reply);
+                if (result.Distance <= 0.1f || result.Distance > 6f)
+                    throw new Exception($"Implausible distance {result.Distance} m.");
+
+                // Let the reply and the distance sentence be queued and spoken.
+                var spokenDeadline = Time.realtimeSinceStartup + 15f;
+                while (speech != null && speech.IsSpeaking && Time.realtimeSinceStartup < spokenDeadline)
+                    await Awaitable.NextFrameAsync();
+                var utterances = speech != null ? speech.UtteranceCount - before : 0;
+                var size = result.Depth != null && !result.Depth.FillsFrame ? $", {DepthRegion.FormatLength(result.Depth.Width)} wide" : "";
+                report.Append($"[{language}] \"{result.Name}\" at {DepthRegion.FormatLength(result.Distance)}{size}: " +
+                    $"{result.Description} ({result.Stats.totalSec:0.0}s, {utterances} utterances, last in '{speech?.LastLanguage}', " +
+                    $"distance said as \"{PointerMath.SpokenDistance(result.Distance, language)}\"). ");
+            }
+
+            panel.Language = SpeechLanguage.English;
+            return report.ToString();
         }
 
         // Exit criterion: the garden lands on a real surface at once.
