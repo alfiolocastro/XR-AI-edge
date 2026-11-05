@@ -15,7 +15,8 @@ namespace AIEdge.UI
     public class LauncherPanel : MonoBehaviour
     {
         const float k_Width = 900f;
-        const float k_Height = 980f;
+        const float k_Height = 1030f;
+        const float k_VoiceRowHeight = 100f;
         const float k_RefreshInterval = 0.25f;
 
         [SerializeField, Tooltip("Model service. Uses LlmService.Instance if empty.")]
@@ -48,6 +49,7 @@ namespace AIEdge.UI
 
         class VoiceRow
         {
+            public VoiceInfo Voice;
             public TextMeshProUGUI Status;
             public Image Progress;
             public Button Primary;
@@ -58,7 +60,7 @@ namespace AIEdge.UI
         }
 
         readonly List<ModelRow> m_Rows = new List<ModelRow>();
-        VoiceRow m_Voice;
+        readonly List<VoiceRow> m_VoiceRows = new List<VoiceRow>();
         readonly List<ExperienceTile> m_Tiles = new List<ExperienceTile>();
         RectTransform m_Panel;
         TextMeshProUGUI m_Footer;
@@ -80,7 +82,8 @@ namespace AIEdge.UI
         {
             foreach (var row in m_Rows)
                 row.Download?.Cancel();
-            m_Voice?.Download?.Cancel();
+            foreach (var row in m_VoiceRows)
+                row.Download?.Cancel();
         }
 
         void Update()
@@ -138,18 +141,22 @@ namespace AIEdge.UI
                 y += 150f;
             }
 
-            m_Voice = BuildVoiceRow(y);
+            foreach (var voice in VoiceCatalog.All)
+            {
+                m_VoiceRows.Add(BuildVoiceRow(voice, y));
+                y += k_VoiceRowHeight + 10f;
+            }
 
             m_Footer = UiFactory.CreateText(m_Panel, "Footer", "", 20);
             m_Footer.color = UiFactory.MutedTextColor;
-            UiFactory.Place(m_Footer.rectTransform, 32, 800, 836, 60);
+            UiFactory.Place(m_Footer.rectTransform, 32, y + 6, 836, 60);
 
             var benchmark = UiFactory.CreateButton(m_Panel, "Benchmark", UiFactory.CardColor, () => BenchmarkRequested?.Invoke());
-            UiFactory.Place((RectTransform)benchmark.transform, 32, 894, 268, 60);
+            UiFactory.Place((RectTransform)benchmark.transform, 32, y + 80, 268, 60);
             var unload = UiFactory.CreateButton(m_Panel, "Unload model", UiFactory.CardColor, () => m_Service.Unload());
-            UiFactory.Place((RectTransform)unload.transform, 316, 894, 268, 60);
+            UiFactory.Place((RectTransform)unload.transform, 316, y + 80, 268, 60);
             var recenter = UiFactory.CreateButton(m_Panel, "Recenter", UiFactory.CardColor, Recenter);
-            UiFactory.Place((RectTransform)recenter.transform, 600, 894, 268, 60);
+            UiFactory.Place((RectTransform)recenter.transform, 600, y + 80, 268, 60);
         }
 
         ModelRow BuildModelRow(ModelInfo model, float y)
@@ -178,57 +185,53 @@ namespace AIEdge.UI
             return row;
         }
 
-        VoiceRow BuildVoiceRow(float y)
+        VoiceRow BuildVoiceRow(VoiceInfo voice, float y)
         {
-            var voice = VoiceCatalog.Default;
-            var row = new VoiceRow();
+            var row = new VoiceRow { Voice = voice };
             var card = UiFactory.CreateImage(m_Panel, voice.id, UiFactory.CardColor);
-            UiFactory.Place(card.rectTransform, 32, y, 836, 136);
+            UiFactory.Place(card.rectTransform, 32, y, 836, k_VoiceRowHeight);
 
-            var name = UiFactory.CreateText(card.transform, "Name", voice.displayName, 28);
-            UiFactory.Place(name.rectTransform, 20, 12, 560, 36);
-            var details = $"{ModelDownloader.FormatBytes(voice.sizeBytes)} · spoken replies, offline · CPU · {voice.license}";
-            var info = UiFactory.CreateText(card.transform, "Details", details, 20);
-            info.color = UiFactory.MutedTextColor;
-            UiFactory.Place(info.rectTransform, 20, 50, 560, 28);
-            row.Status = UiFactory.CreateText(card.transform, "Status", "", 20);
-            UiFactory.Place(row.Status.rectTransform, 20, 80, 560, 30);
+            var name = UiFactory.CreateText(card.transform, "Name", voice.displayName, 24);
+            UiFactory.Place(name.rectTransform, 20, 8, 560, 32);
+            row.Status = UiFactory.CreateText(card.transform, "Status", "", 19);
+            UiFactory.Place(row.Status.rectTransform, 20, 42, 560, 28);
 
             row.Progress = UiFactory.CreateProgressBar(card.transform, "Progress");
-            UiFactory.Place((RectTransform)row.Progress.transform.parent, 20, 116, 560, 8);
+            UiFactory.Place((RectTransform)row.Progress.transform.parent, 20, 80, 560, 8);
 
-            row.Primary = UiFactory.CreateButton(card.transform, "Download", UiFactory.AccentColor, OnVoicePrimary);
-            UiFactory.Place((RectTransform)row.Primary.transform, 600, 16, 216, 50);
-            row.Delete = UiFactory.CreateButton(card.transform, "Delete", UiFactory.DangerColor, OnVoiceDelete, 22);
-            UiFactory.Place((RectTransform)row.Delete.transform, 600, 74, 216, 46);
+            row.Primary = UiFactory.CreateButton(card.transform, "Download", UiFactory.AccentColor, () => OnVoicePrimary(row), 22);
+            UiFactory.Place((RectTransform)row.Primary.transform, 600, 8, 216, 40);
+            row.Delete = UiFactory.CreateButton(card.transform, "Delete", UiFactory.DangerColor, () => OnVoiceDelete(row), 20);
+            UiFactory.Place((RectTransform)row.Delete.transform, 600, 54, 216, 36);
             return row;
         }
 
-        void OnVoicePrimary()
+        void OnVoicePrimary(VoiceRow row)
         {
             var speech = SpeechEngine.Instance;
             if (speech == null)
                 return;
 
-            var voice = VoiceCatalog.Default;
+            var voice = row.Voice;
             if (speech.Downloader.IsDownloading(voice))
-                m_Voice.Download?.Cancel();
+                row.Download?.Cancel();
             else if (VoiceStore.GetState(voice) == ModelState.Downloaded)
-                speech.Speak("Hello! This is how replies will sound.", interrupt: true);
+                speech.Speak(voice.language == SpeechLanguage.Italian
+                    ? "Ciao! Ecco come suoneranno le risposte in italiano."
+                    : "Hello! This is how replies will sound.", interrupt: true, language: voice.language);
             else
-                DownloadVoice(speech);
+                DownloadVoice(speech, row);
             Refresh();
         }
 
-        async void DownloadVoice(SpeechEngine speech)
+        async void DownloadVoice(SpeechEngine speech, VoiceRow row)
         {
-            var row = m_Voice;
             row.Error = null;
             row.Download = new CancellationTokenSource();
             var progress = new Progress<DownloadProgress>(p => row.LastProgress = p);
             try
             {
-                await speech.Downloader.DownloadAsync(VoiceCatalog.Default, progress, row.Download.Token);
+                await speech.Downloader.DownloadAsync(row.Voice, progress, row.Download.Token);
                 speech.SelectEngine();
             }
             catch (OperationCanceledException)
@@ -247,32 +250,32 @@ namespace AIEdge.UI
             }
         }
 
-        void OnVoiceDelete()
+        void OnVoiceDelete(VoiceRow row)
         {
             var speech = SpeechEngine.Instance;
-            // Release the voice files before deleting them, then fall back to the system engine.
+            // Release the voice files before deleting them, then reload the voices that are left.
             speech?.ShutdownEngine();
             try
             {
-                VoiceStore.Delete(VoiceCatalog.Default);
-                m_Voice.Error = null;
+                VoiceStore.Delete(row.Voice);
+                row.Error = null;
             }
             catch (IOException e)
             {
-                m_Voice.Error = e.Message;
+                row.Error = e.Message;
             }
 
             speech?.SelectEngine();
             Refresh();
         }
 
-        void RefreshVoice()
+        void RefreshVoice(VoiceRow row)
         {
-            var row = m_Voice;
-            var voice = VoiceCatalog.Default;
+            var voice = row.Voice;
             var speech = SpeechEngine.Instance;
             var downloading = speech != null && speech.Downloader.IsDownloading(voice);
             var state = VoiceStore.GetState(voice);
+            var details = $"{ModelDownloader.FormatBytes(voice.sizeBytes)} · offline · {voice.license}";
 
             string status;
             float fraction;
@@ -288,7 +291,8 @@ namespace AIEdge.UI
             else if (state == ModelState.Downloaded)
             {
                 fraction = 1f;
-                status = speech == null || !speech.IsNeural ? "Ready" : speech.IsReady ? "<color=#7FE0A0>In use</color>" : "Loading…";
+                var ready = speech != null && speech.IsVoiceReady(voice);
+                status = $"{details} · {(ready ? "<color=#7FE0A0>In use</color>" : "Loading…")}";
                 primary = "Test voice";
             }
             else if (state == ModelState.Partial)
@@ -300,7 +304,7 @@ namespace AIEdge.UI
             else
             {
                 fraction = 0f;
-                status = speech != null && speech.IsReady ? "Not downloaded · using the system voice" : "Not downloaded · needed for spoken replies";
+                status = $"{details} · not downloaded";
                 primary = "Download";
             }
 
@@ -310,7 +314,7 @@ namespace AIEdge.UI
             row.Status.text = status;
             UiFactory.SetProgress(row.Progress, fraction);
             UiFactory.SetLabel(row.Primary, primary);
-            row.Primary.interactable = speech != null && (state != ModelState.Downloaded || speech.IsReady);
+            row.Primary.interactable = speech != null && (state != ModelState.Downloaded || speech.IsVoiceReady(voice));
             row.Delete.interactable = !downloading && state != ModelState.NotDownloaded;
         }
 
@@ -396,7 +400,8 @@ namespace AIEdge.UI
 
             foreach (var row in m_Rows)
                 RefreshRow(row);
-            RefreshVoice();
+            foreach (var row in m_VoiceRows)
+                RefreshVoice(row);
 
             var loaded = m_Service.LoadedModel;
             var memory = loaded != null && m_Service.LoadInfo != null ? $"{loaded.displayName} loaded ({m_Service.LoadInfo.backend}, {m_Service.LoadInfo.pssMb} MB)" : "No model loaded";

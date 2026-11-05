@@ -14,8 +14,9 @@ language models, the image questions and the voice. Nothing is sent to a server.
 The project is built on the open-source on-device AI stack from [Google AI Edge](https://github.com/google-ai-edge):
 the Gallery app's experiences, the LiteRT-LM runtime, and the LiteRT-LM models published for it.
 
-Replies in all three experiences can be spoken by a bundled neural voice (Piper, through sherpa-onnx). The system
-text-to-speech engine on Quest is disabled.
+Replies in all three experiences can be spoken by neural voices (Piper, through sherpa-onnx), in **English** and
+**Italian**. Each reply is read by the voice of its language, detected from the text. Ask in Italian and Gemma answers
+in Italian, read by the Italian voice. The system text-to-speech engine on Quest is disabled.
 
 ## Requirements
 
@@ -27,7 +28,7 @@ text-to-speech engine on Quest is disabled.
   git lfs install
   ```
 
-- **Storage on the headset:** about 3 GB for the models and voice.
+- **Storage on the headset:** about 3.1 GB for the models and both voices.
 - **Hugging Face token:** only needed for Tiny Garden (see below).
 
 ## Getting started
@@ -42,9 +43,9 @@ text-to-speech engine on Quest is disabled.
    ```
 
 4. On the headset, allow camera and spatial data access when asked. The **launcher** panel opens in front of you.
-   From it you download the models and the voice, then open an experience.
+   From it you download the models and the voices, then open an experience.
 
-### Models and voice
+### Models and voices
 
 Downloads go to the app's storage (`/sdcard/Android/data/<package>/files/`) and are pinned to fixed Hugging Face
 commits. They resume after interruption and can be deleted from the launcher.
@@ -53,7 +54,8 @@ commits. They resume after interruption and can be deleted from the launcher.
 |---|---|---|---|
 | Gemma 4 E2B-it (`litert-community/gemma-4-E2B-it-litert-lm`) | Chat, Point & Ask | 2.6 GB | Open |
 | FunctionGemma 270M Tiny Garden (`litert-community/functiongemma-270m-ft-tiny-garden`) | Tabletop Garden | 289 MB | Gated (auto-approve) |
-| Piper "alba" voice (`csukuangfj/vits-piper-en_GB-alba-medium`) | Spoken replies | 81 MB | Open |
+| Piper "alba" voice (`csukuangfj/vits-piper-en_GB-alba-medium`) | Spoken replies in English | 81 MB | Open |
+| Piper "paola" voice (`csukuangfj/vits-piper-it_IT-paola-medium`) | Spoken replies in Italian | 82 MB | Open |
 
 For the gated Tiny Garden model:
 
@@ -71,7 +73,7 @@ The token stays on the device. **Never commit it.**
 
 ```
 Assets/AIEdge/                 All port code (asmdef AIEdge, namespace AIEdge)
-  Core/                        LLM engine and service, model catalog/downloader/store, speech engine, voice pack
+  Core/                        LLM engine and service, model catalog/downloader/store, speech engine, voice pack, language detection
   Camera/                      Passthrough camera capture and crops
   Spatial/                     Depth service, depth-based measurement and placement
   Experiences/Chat|AskImage|TinyGarden/
@@ -108,7 +110,7 @@ Notes:
    - Chat and Point & Ask: `chat_multiturn`, `ask_image`
    - Garden: `garden`, `garden_view`
    - Depth: `depth`, `depth_ask`, `depth_place`, `depth_garden`
-   - Voice: `speech`
+   - Voice: `speech`, `speech_it`
 3. Results are logged as `SELFTEST|{json}` lines (logcat tag `Unity`) and written to `selftest_results.txt` in the same folder.
 4. Delete `selftest.json` afterwards, or the tests run on every launch.
 
@@ -117,7 +119,7 @@ Notes:
 Thanks to the [Google AI Edge](https://github.com/google-ai-edge) team. This port would not exist without their
 open-source Gallery app and LiteRT-LM runtime.
 
-This repository contains only original code and Unity template assets. The models and the voice are downloaded at
+This repository contains only original code and Unity template assets. The models and the voices are downloaded at
 runtime under their own terms:
 
 | Component | License / terms |
@@ -127,7 +129,8 @@ runtime under their own terms:
 | Gemma 4 E2B and FunctionGemma 270M Tiny Garden models | [Gemma Terms of Use](https://ai.google.dev/gemma/terms) |
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) v1.13.8 (bundled jar and `libsherpa-onnx-jni.so`, includes ONNX Runtime, MIT) | Apache 2.0 |
 | [Piper](https://github.com/rhasspy/piper) "alba" voice: training data from the [University of Edinburgh](https://datashare.ed.ac.uk/handle/10283/3270) | CC BY 4.0 |
-| espeak-ng data, downloaded with the voice for phonemization | GPL-3.0 |
+| [Piper](https://github.com/rhasspy/piper) "paola" voice: training data from [paolapersico1/Voice-Dataset-Italian](https://huggingface.co/datasets/paolapersico1/Voice-Dataset-Italian) | CC0 1.0 |
+| espeak-ng data, downloaded with each voice for phonemization | GPL-3.0 |
 | Unity Mixed Reality template and package samples | Unity Companion License |
 
 Tiny Garden's original game art and code are not used. The garden is rebuilt in Unity from primitives.

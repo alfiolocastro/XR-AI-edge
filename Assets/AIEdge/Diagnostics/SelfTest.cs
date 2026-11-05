@@ -51,6 +51,7 @@ namespace AIEdge.Diagnostics
             await Run("depth", TestDepth);
             await Run("depth_ask", TestDepthAsk);
             await Run("speech", TestSpeech);
+            await Run("speech_it", TestSpeechItalian);
             await Run("depth_place", TestDepthPlace);
             await Run("depth_garden", TestDepthGarden);
 
@@ -616,6 +617,55 @@ namespace AIEdge.Diagnostics
             return $"{download}{speech.Info}; first sentence audio after {startLatency:0.00}s, done in {sentenceSec:0.0}s at {fps:0} fps; " +
                 $"chat reply ({reply.stats.totalSec:0.0}s to generate) spoken as {utterances} utterances, audio after {latency:0.00}s" +
                 (streamed ? " (before the reply finished)" : "");
+        }
+
+        // Italian replies: the Italian voice is loaded next to the English one, and a reply in Italian is read by it.
+        async Awaitable<string> TestSpeechItalian()
+        {
+            var speech = SpeechEngine.Instance;
+            if (speech == null)
+                throw new Exception("No SpeechEngine in the scene.");
+            speech.Enabled = true;
+
+            var download = "";
+            var voice = VoiceCatalog.Paola;
+            if (VoiceStore.GetState(voice) != ModelState.Downloaded)
+            {
+                var downloadStart = Time.realtimeSinceStartup;
+                await speech.Downloader.DownloadAsync(voice);
+                download = $"voice downloaded in {Time.realtimeSinceStartup - downloadStart:0}s; ";
+            }
+
+            if (!speech.IsVoiceReady(voice))
+                speech.SelectEngine();
+            var deadline = Time.realtimeSinceStartup + 30f;
+            while (!speech.IsVoiceReady(voice) && Time.realtimeSinceStartup < deadline)
+                await Awaitable.NextFrameAsync();
+            if (!speech.IsVoiceReady(voice))
+                throw new TimeoutException("Italian voice never became ready: " + speech.Info);
+
+            // An Italian chat reply should be read by the Italian voice.
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            if (!app.Chat.IsOpen)
+                app.OpenChat();
+            app.Chat.NewChat();
+            var before = speech.UtteranceCount;
+            var reply = await ChatTurnAsync(app.Chat, "Rispondi in italiano: dimmi due curiosità sulla Luna, in due frasi brevi.");
+            var utterances = speech.UtteranceCount - before;
+            if (utterances == 0)
+                throw new Exception("Reply was not spoken.");
+            if (speech.LastLanguage != SpeechLanguage.Italian)
+                throw new Exception($"Reply spoken in '{speech.LastLanguage}', expected Italian. Reply: {reply.text}");
+            var latency = speech.LastReplyAudioLatency;
+
+            // An English sentence right after should switch back to the English voice.
+            speech.Speak("And this sentence is in English again.", interrupt: true);
+            var english = speech.LastLanguage;
+            var fps = 1f / Mathf.Max(0.001f, Time.smoothDeltaTime);
+            if (english != SpeechLanguage.English)
+                throw new Exception($"English sentence spoken in '{english}'.");
+            return $"{download}{speech.Info}; Italian reply spoken as {utterances} utterances by the Italian voice, " +
+                $"audio after {latency:0.00}s; English sentence switched back to English; {fps:0} fps";
         }
 
         // Exit criterion: the garden lands on a real surface at once.

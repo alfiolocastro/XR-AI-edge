@@ -21,6 +21,9 @@ namespace AIEdge
         /// <summary>Name shown to the user.</summary>
         public string displayName;
 
+        /// <summary>Language the voice speaks, as a two-letter code ("en", "it").</summary>
+        public string language;
+
         /// <summary>Hugging Face repository holding the sherpa-onnx packaging of the voice.</summary>
         public string repoId;
 
@@ -45,7 +48,7 @@ namespace AIEdge
             path.StartsWith("espeak-ng-data/", StringComparison.Ordinal);
     }
 
-    /// <summary>The voices this app offers.</summary>
+    /// <summary>The voices this app offers, one per reply language.</summary>
     public static class VoiceCatalog
     {
         /// <summary>
@@ -55,15 +58,46 @@ namespace AIEdge
         public static readonly VoiceInfo Alba = new VoiceInfo
         {
             id = "piper-en_GB-alba-medium",
-            displayName = "Neural voice · Alba (Piper)",
+            displayName = "English voice · Alba (Piper)",
+            language = "en",
             repoId = "csukuangfj/vits-piper-en_GB-alba-medium",
             commitHash = "7e469a54c7a4f5bd191cae788e197266e2c9c5ac",
             sizeBytes = 81194326,
             license = "CC BY 4.0",
         };
 
-        /// <summary>The voice used when downloaded.</summary>
+        /// <summary>
+        /// Piper "paola" (medium), Italian, 22 kHz. The training data
+        /// (paolapersico1/Voice-Dataset-Italian) is CC0.
+        /// </summary>
+        public static readonly VoiceInfo Paola = new VoiceInfo
+        {
+            id = "piper-it_IT-paola-medium",
+            displayName = "Voce italiana · Paola (Piper)",
+            language = "it",
+            repoId = "csukuangfj/vits-piper-it_IT-paola-medium",
+            commitHash = "b2d11ae8ce81120ba05f39fb43ecbff2d6d634ea",
+            sizeBytes = 81504041,
+            license = "CC0",
+        };
+
+        /// <summary>The English voice, the fallback when a reply's language is unclear.</summary>
         public static VoiceInfo Default => Alba;
+
+        /// <summary>All voices.</summary>
+        public static System.Collections.Generic.IReadOnlyList<VoiceInfo> All { get; } = new[] { Alba, Paola };
+
+        /// <summary>The voice for a language code, or null.</summary>
+        public static VoiceInfo ForLanguage(string language)
+        {
+            foreach (var voice in All)
+            {
+                if (voice.language == language)
+                    return voice;
+            }
+
+            return null;
+        }
     }
 
     /// <summary>

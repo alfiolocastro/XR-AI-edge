@@ -1,15 +1,18 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace AIEdge
 {
     /// <summary>
-    /// Reads model replies aloud on device. Uses the downloaded neural voice (<see cref="VoiceCatalog.Default"/>,
-    /// Piper through sherpa-onnx in <c>com.xraiedge.litertlm.NeuralSpeechBridge</c>) when present, and the system
-    /// TextToSpeech engine (<c>SpeechBridge</c>) otherwise; on Quest the system engine is disabled, so the voice is
-    /// needed there. Streamed replies are spoken sentence by sentence as they arrive. The on/off choice is shared by
-    /// all experiences and remembered between sessions.
+    /// Reads model replies aloud on device, in English or Italian. Every downloaded voice in <see cref="VoiceCatalog"/>
+    /// (Piper through sherpa-onnx in <c>com.xraiedge.litertlm.NeuralSpeechBridge</c>) is loaded, and each reply is
+    /// read by the voice of its language (<see cref="SpeechLanguage"/>). With no voice downloaded the system
+    /// TextToSpeech engine (<c>SpeechBridge</c>) is used; on Quest it is disabled, so a voice is needed there.
+    /// Streamed replies are spoken sentence by sentence as they arrive. The on/off choice is shared by all experiences
+    /// and remembered between sessions.
     /// </summary>
     public class SpeechEngine : MonoBehaviour
     {
@@ -17,13 +20,13 @@ namespace AIEdge
         const string k_NeuralBridgeClass = "com.xraiedge.litertlm.NeuralSpeechBridge";
         const string k_EnabledKey = "AIEdge.SpeakReplies";
 
-        [SerializeField, Tooltip("Speech language as a BCP 47 tag. Replies are usually English.")]
+        [SerializeField, Tooltip("System engine language as a BCP 47 tag, used only when no neural voice is downloaded.")]
         string m_Language = "en-US";
 
         [SerializeField, Tooltip("Speech rate: 1 is normal.")]
         float m_Rate = 1.05f;
 
-        [SerializeField, Tooltip("CPU threads for the neural voice. Low, so rendering and the LLM keep their cores.")]
+        [SerializeField, Tooltip("CPU threads per neural voice. Low, so rendering and the LLM keep their cores.")]
         int m_NeuralThreads = 2;
 
         /// <summary>The engine in the scene, or null.</summary>
@@ -35,17 +38,20 @@ namespace AIEdge
         /// <summary>Raised when an utterance starts playing.</summary>
         public event Action UtteranceStarted;
 
-        /// <summary>Downloads the neural voice.</summary>
+        /// <summary>Downloads the neural voices.</summary>
         public VoiceDownloader Downloader { get; } = new VoiceDownloader();
 
-        /// <summary>True when the neural voice is in use (rather than the system engine).</summary>
-        public bool IsNeural { get; private set; }
+        /// <summary>True when neural voices are in use (rather than the system engine).</summary>
+        public bool IsNeural => m_Engines.Any(e => e.Voice != null);
 
-        /// <summary>True once the speech engine is bound and can speak.</summary>
-        public bool IsReady { get; private set; }
+        /// <summary>True once at least one engine can speak.</summary>
+        public bool IsReady => m_Engines.Any(e => e.Ready);
 
-        /// <summary>Engine details reported at start (JSON), or the error.</summary>
-        public string Info { get; private set; } = "";
+        /// <summary>True when the voice for this language is loaded and can speak.</summary>
+        public bool IsVoiceReady(VoiceInfo voice) => m_Engines.Any(e => e.Ready && e.Voice == voice);
+
+        /// <summary>Engine details reported at start (JSON), or errors, one line per engine.</summary>
+        public string Info => m_Engines.Count == 0 ? m_Info : string.Join("\n", m_Engines.Select(e => e.Info));
 
         /// <summary>True while audio is playing or queued.</summary>
         public bool IsSpeaking => m_Queued > 0;
@@ -55,6 +61,9 @@ namespace AIEdge
 
         /// <summary>Utterances queued since start.</summary>
         public int UtteranceCount { get; private set; }
+
+        /// <summary>Language of the last utterance queued ("en", "it"), or null for the system engine.</summary>
+        public string LastLanguage { get; private set; }
 
         /// <summary>Whether replies are read aloud.</summary>
         public bool Enabled
@@ -72,9 +81,22 @@ namespace AIEdge
             }
         }
 
+        /// <summary>One loaded speech engine: a neural voice, or the system engine (<see cref="Voice"/> null).</summary>
+        class Engine
+        {
+            public VoiceInfo Voice;
+            public AndroidJavaObject Bridge;
+            public bool Ready;
+            public string Info = "";
+            public string Name => Voice != null ? Voice.language : "system";
+        }
+
         readonly ConcurrentQueue<Action> m_MainThreadQueue = new ConcurrentQueue<Action>();
-        AndroidJavaObject m_Bridge;
+        readonly List<Engine> m_Engines = new List<Engine>();
+        string m_Info = "";
         SpeechText m_Reply;
+        string m_ReplyLanguage;
+        string m_RecentLanguage = SpeechLanguage.English;
         int m_NextId;
         int m_Queued;
         float m_ReplyStarted = -1f;
@@ -88,51 +110,49 @@ namespace AIEdge
         void Start() => SelectEngine();
 
         /// <summary>
-        /// (Re)creates the engine: the neural voice if downloaded, else the system engine. Call after the voice is
-        /// downloaded or deleted.
+        /// (Re)creates the engines: every downloaded voice, or the system engine when there is none. Call after a
+        /// voice is downloaded or deleted.
         /// </summary>
         public void SelectEngine()
         {
-            ShutdownBridge();
-            IsReady = false;
-            m_Generation++;
-            var voiceDir = VoiceStore.GetPath(VoiceCatalog.Default);
-            IsNeural = VoiceStore.GetState(VoiceCatalog.Default) == ModelState.Downloaded;
+            ShutdownEngine();
 #if UNITY_ANDROID && !UNITY_EDITOR
-            if (IsNeural)
+            foreach (var voice in VoiceCatalog.All)
             {
-                Info = "Loading neural voice…";
-                m_Bridge = new AndroidJavaObject(k_NeuralBridgeClass, voiceDir, m_NeuralThreads, new ListenerProxy(this, m_Generation));
+                if (VoiceStore.GetState(voice) != ModelState.Downloaded)
+                    continue;
+                var engine = new Engine { Voice = voice, Info = $"{voice.language}: loading…" };
+                engine.Bridge = new AndroidJavaObject(k_NeuralBridgeClass, VoiceStore.GetPath(voice), m_NeuralThreads,
+                    new ListenerProxy(this, engine, m_Generation));
+                m_Engines.Add(engine);
             }
-            else
+
+            if (m_Engines.Count == 0)
             {
-                Info = "Starting system speech engine…";
+                var engine = new Engine { Info = "system: starting…" };
                 using var player = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
                 using var activity = player.GetStatic<AndroidJavaObject>("currentActivity");
-                m_Bridge = new AndroidJavaObject(k_BridgeClass, activity, new ListenerProxy(this, m_Generation));
+                engine.Bridge = new AndroidJavaObject(k_BridgeClass, activity, new ListenerProxy(this, engine, m_Generation));
+                m_Engines.Add(engine);
             }
 #else
-            Info = "Speech runs on Android devices only.";
+            m_Info = "Speech runs on Android devices only.";
 #endif
         }
 
-        /// <summary>Stops and releases the current engine (for example before deleting the voice files).</summary>
+        /// <summary>Stops and releases every engine (for example before deleting voice files).</summary>
         public void ShutdownEngine()
         {
-            ShutdownBridge();
-            IsReady = false;
             m_Generation++;
-        }
-
-        void ShutdownBridge()
-        {
             m_Reply = null;
             m_Queued = 0;
-            if (m_Bridge == null)
-                return;
-            m_Bridge.Call("shutdown");
-            m_Bridge.Dispose();
-            m_Bridge = null;
+            foreach (var engine in m_Engines)
+            {
+                engine.Bridge.Call("shutdown");
+                engine.Bridge.Dispose();
+            }
+
+            m_Engines.Clear();
         }
 
         void Update()
@@ -145,7 +165,7 @@ namespace AIEdge
         {
             if (Instance == this)
                 Instance = null;
-            ShutdownBridge();
+            ShutdownEngine();
         }
 
         /// <summary>Starts reading a new streamed reply, cutting off anything still being spoken.</summary>
@@ -153,6 +173,7 @@ namespace AIEdge
         {
             Stop();
             m_Reply = new SpeechText();
+            m_ReplyLanguage = null;
             m_ReplyStarted = Time.realtimeSinceStartup;
             LastReplyAudioLatency = -1f;
         }
@@ -163,7 +184,7 @@ namespace AIEdge
             if (m_Reply == null)
                 return;
             foreach (var sentence in m_Reply.Append(text))
-                Speak(sentence);
+                SpeakReplySentence(sentence);
         }
 
         /// <summary>Speaks the rest of the reply.</summary>
@@ -172,88 +193,130 @@ namespace AIEdge
             if (m_Reply == null)
                 return;
             foreach (var sentence in m_Reply.Flush())
-                Speak(sentence);
+                SpeakReplySentence(sentence);
             m_Reply = null;
         }
 
-        /// <summary>Queues plain text to speak (or replaces the queue when <paramref name="interrupt"/>).</summary>
-        public void Speak(string text, bool interrupt = false)
+        // A reply keeps one voice: its language is settled by the first sentence that gives a clear signal, so a
+        // stray English word in an Italian reply doesn't switch voices mid-answer.
+        void SpeakReplySentence(string sentence)
         {
-            if (!Enabled || !IsReady || m_Bridge == null || string.IsNullOrWhiteSpace(text))
+            m_ReplyLanguage ??= SpeechLanguage.Detect(sentence);
+            Speak(sentence, false, m_ReplyLanguage);
+        }
+
+        /// <summary>
+        /// Queues plain text to speak (or replaces the queue when <paramref name="interrupt"/>), with the voice of
+        /// <paramref name="language"/> ("en", "it"), or of the text's detected language when null.
+        /// </summary>
+        public void Speak(string text, bool interrupt = false, string language = null)
+        {
+            if (!Enabled || string.IsNullOrWhiteSpace(text))
                 return;
 
+            language ??= SpeechLanguage.Detect(text) ?? m_RecentLanguage;
+            var engine = Choose(language);
+            if (engine == null)
+                return;
+
+            if (interrupt)
+                Stop();
             var id = (m_NextId++).ToString();
-            if (m_Bridge.Call<bool>("speak", text, id, interrupt))
+            if (engine.Bridge.Call<bool>("speak", text, id, false))
             {
-                m_Queued = interrupt ? 1 : m_Queued + 1;
+                m_Queued++;
                 UtteranceCount++;
+                LastLanguage = engine.Voice?.language;
+                if (engine.Voice != null)
+                    m_RecentLanguage = engine.Voice.language;
             }
         }
+
+        // The voice for the language if loaded, else any ready voice (better than silence), else the system engine.
+        Engine Choose(string language) =>
+            m_Engines.FirstOrDefault(e => e.Ready && e.Voice != null && e.Voice.language == language) ??
+            m_Engines.FirstOrDefault(e => e.Ready);
 
         /// <summary>Stops speaking and drops the reply in progress.</summary>
         public void Stop()
         {
             m_Reply = null;
             m_Queued = 0;
-            m_Bridge?.Call("stop");
+            foreach (var engine in m_Engines)
+                engine.Bridge.Call("stop");
         }
 
         void Post(Action action) => m_MainThreadQueue.Enqueue(action);
 
-        void OnReady(string infoJson)
+        void OnReady(Engine engine, string infoJson)
         {
-            var language = m_Bridge.Call<int>("setLanguage", m_Language);
-            m_Bridge.Call("setRate", m_Rate);
-            Info = $"{infoJson} setLanguage({m_Language})={language}";
-            if (language < 0)
+            if (engine.Voice != null)
             {
-                // The system engine bound but has no usable voice (Quest's is disabled): wait for the neural voice.
-                Info = $"System speech engine has no voice ({language}). Download the neural voice in the launcher. {infoJson}";
-                Debug.LogWarning($"[AIEdge] {Info}");
+                engine.Bridge.Call("setRate", m_Rate);
+                engine.Info = $"{engine.Name}: {infoJson}";
+                engine.Ready = true;
+                Debug.Log($"[AIEdge] Speech ready: {engine.Info}");
                 return;
             }
 
-            IsReady = true;
-            Debug.Log($"[AIEdge] Speech ready: {Info}");
+            var language = engine.Bridge.Call<int>("setLanguage", m_Language);
+            engine.Bridge.Call("setRate", m_Rate);
+            if (language < 0)
+            {
+                // The system engine bound but has no usable voice (Quest's is disabled): wait for a neural voice.
+                engine.Info = $"System speech engine has no voice ({language}). Download a voice in the launcher. {infoJson}";
+                Debug.LogWarning($"[AIEdge] {engine.Info}");
+                return;
+            }
+
+            engine.Info = $"system: {infoJson} setLanguage({m_Language})={language}";
+            engine.Ready = true;
+            Debug.Log($"[AIEdge] Speech ready: {engine.Info}");
         }
 
-        /// <summary>Receives bridge callbacks on Android threads and forwards them to the main thread.</summary>
+        /// <summary>Receives one engine's callbacks on Android threads and forwards them to the main thread.</summary>
         class ListenerProxy : AndroidJavaProxy
         {
-            readonly SpeechEngine m_Engine;
+            readonly SpeechEngine m_Owner;
+            readonly Engine m_Engine;
             readonly int m_Generation;
 
-            public ListenerProxy(SpeechEngine engine, int generation) : base(k_BridgeClass + "$Listener")
+            public ListenerProxy(SpeechEngine owner, Engine engine, int generation) : base(k_BridgeClass + "$Listener")
             {
+                m_Owner = owner;
                 m_Engine = engine;
                 m_Generation = generation;
             }
 
-            // Callbacks from an engine replaced by SelectEngine are dropped.
-            bool IsCurrent => m_Generation == m_Engine.m_Generation;
+            // Callbacks from engines replaced by SelectEngine are dropped.
+            bool IsCurrent => m_Generation == m_Owner.m_Generation;
 
-            public void onReady(string infoJson) => m_Engine.Post(() =>
+            public void onReady(string infoJson) => m_Owner.Post(() =>
             {
                 if (IsCurrent)
-                    m_Engine.OnReady(infoJson);
+                    m_Owner.OnReady(m_Engine, infoJson);
             });
 
-            public void onError(string message) => m_Engine.Post(() =>
+            public void onError(string message) => m_Owner.Post(() =>
             {
                 if (!IsCurrent)
                     return;
-                m_Engine.Info = message;
-                Debug.LogWarning($"[AIEdge] Speech unavailable: {message}");
+                m_Engine.Info = $"{m_Engine.Name}: {message}";
+                Debug.LogWarning($"[AIEdge] Speech unavailable: {m_Engine.Info}");
             });
 
-            public void onStart(string utteranceId) => m_Engine.Post(() =>
+            public void onStart(string utteranceId) => m_Owner.Post(() =>
             {
-                if (m_Engine.m_ReplyStarted >= 0f && m_Engine.LastReplyAudioLatency < 0f)
-                    m_Engine.LastReplyAudioLatency = Time.realtimeSinceStartup - m_Engine.m_ReplyStarted;
-                m_Engine.UtteranceStarted?.Invoke();
+                if (m_Owner.m_ReplyStarted >= 0f && m_Owner.LastReplyAudioLatency < 0f)
+                    m_Owner.LastReplyAudioLatency = Time.realtimeSinceStartup - m_Owner.m_ReplyStarted;
+                m_Owner.UtteranceStarted?.Invoke();
             });
 
-            public void onDone(string utteranceId) => m_Engine.Post(() => m_Engine.m_Queued = Mathf.Max(0, m_Engine.m_Queued - 1));
+            public void onDone(string utteranceId) => m_Owner.Post(() =>
+            {
+                if (IsCurrent)
+                    m_Owner.m_Queued = Mathf.Max(0, m_Owner.m_Queued - 1);
+            });
         }
     }
 }
