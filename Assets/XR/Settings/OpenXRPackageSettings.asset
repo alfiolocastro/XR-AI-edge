@@ -660,6 +660,30 @@ MonoBehaviour:
   targetOpenXRApiVersion: 
   required: 0
   customRuntimeLoaderName: 
+--- !u!114 &-5307554047742705429
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ac45ba33a6cb81f468c7bf0bfcd05775, type: 3}
+  m_Name: MetaHandTrackingDataSourceFeature Standalone
+  m_EditorClassIdentifier: Oculus.VR::Meta.XR.MetaHandTrackingDataSourceFeature
+  m_enabled: 0
+  nameUi: Meta XR Hand Tracking Data Source
+  version: 0.0.1
+  featureIdInternal: com.meta.openxr.feature.handtrackingdatasource
+  openxrExtensionStrings: XR_EXT_hand_tracking_data_source XR_META_hand_tracking_wide_motion_mode2 XR_EXT_hand_joints_motion_range
+  company: Meta
+  priority: 0
+  targetOpenXRApiVersion: 
+  required: 0
+  customRuntimeLoaderName: 
+  m_WideMotionModeEnabled: 0
+  m_ControllerDrivenHandPoses: 0
 --- !u!114 &-5223263640145189044
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1262,6 +1286,7 @@ MonoBehaviour:
   - {fileID: 1119088386922567787}
   - {fileID: 4928897220033839699}
   - {fileID: 1846174376123264162}
+  - {fileID: 4352269318719933316}
   customLoaderName: 
   m_renderMode: 1
   m_latencyOptimization: 0
@@ -2487,6 +2512,7 @@ MonoBehaviour:
   - {fileID: 3883859847431812771}
   - {fileID: 3430633337226518742}
   - {fileID: -3608209711856210478}
+  - {fileID: -5307554047742705429}
   customLoaderName: 
   m_renderMode: 1
   m_latencyOptimization: 0
@@ -2603,6 +2629,30 @@ MonoBehaviour:
   targetOpenXRApiVersion: 
   required: 0
   customRuntimeLoaderName: 
+--- !u!114 &4352269318719933316
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ac45ba33a6cb81f468c7bf0bfcd05775, type: 3}
+  m_Name: MetaHandTrackingDataSourceFeature Android
+  m_EditorClassIdentifier: Oculus.VR::Meta.XR.MetaHandTrackingDataSourceFeature
+  m_enabled: 0
+  nameUi: Meta XR Hand Tracking Data Source
+  version: 0.0.1
+  featureIdInternal: com.meta.openxr.feature.handtrackingdatasource
+  openxrExtensionStrings: XR_EXT_hand_tracking_data_source XR_META_hand_tracking_wide_motion_mode2 XR_EXT_hand_joints_motion_range
+  company: Meta
+  priority: 0
+  targetOpenXRApiVersion: 
+  required: 0
+  customRuntimeLoaderName: 
+  m_WideMotionModeEnabled: 0
+  m_ControllerDrivenHandPoses: 0
 --- !u!114 &4444733654101275431
 MonoBehaviour:
   m_ObjectHideFlags: 0
