@@ -2,30 +2,51 @@
 
 On-device generative AI in mixed reality on **Meta Quest 3 / 3S**. This is a spatial port of three experiences from
 [Google AI Edge Gallery](https://github.com/google-ai-edge/gallery): **AI Chat**, **Ask Image** and **Tiny Garden**.
-Each one is rebuilt for passthrough, hand tracking and the Meta Depth API, and a fourth experience, **What's That?**, is new. Everything runs on the headset: the
-language models, the image questions and the voice. Nothing is sent to a server.
+Each one is rebuilt for passthrough, hand tracking and the Meta Depth API, and a fourth experience, **What's That?**, is
+new. Everything runs on the headset: the language models, the image questions, the voices and speech recognition.
+Nothing is sent to a server. The app speaks and listens in **English** or **Italian**.
 
 | Experience | What it does in MR |
 |---|---|
-| **Spatial Chat** | Multi-turn chat with Gemma 4 E2B on a world-locked panel. Replies stream in and are read aloud. Past conversations are cards you can grab to resume. |
-| **Point & Ask** | Frame something in the real world with both hands (or point at it) and ask about it. The crop from the passthrough camera goes to Gemma 4 E2B with the question. The answer is pinned in space next to the object. Depth adds real measurements to the prompt ("about 34 cm wide, 1.1 m away"), so you can ask about size and fit. |
-| **Tabletop Garden** | A 3×3 planter placed on a real table with depth. You garden by voice or keyboard through the Gallery's FunctionGemma 270M Tiny Garden model (plant, water, harvest). You can also point ("water *these*") or play by hand with a watering can, seed packets, and pulling flowers. |
-| **What's That?** | Point at something in the room, with your index finger (hold still for a moment) or with a controller (pull the trigger). A ray and a reticle show where depth finds a real surface, with the live distance. Gemma names the object and describes it briefly, in English or Italian. The card pinned beside the object and the spoken reply give its distance from you, measured by depth rather than guessed. The object is highlighted: a live depth outline follows your pointing, and on selection an on-device interactive segmentation model (MediaPipe's magic touch, run with LiteRT in about 0.2 s) cuts it out of the camera image. |
+| **Spatial Chat** | Multi-turn chat with Gemma 4 E2B on a world-locked panel. Type or press **Talk** and speak. Replies stream in and are read aloud. Past conversations are cards you can grab to resume. |
+| **Point & Ask** | Frame something in the real world with both hands (or point at it) and ask about it, typed or spoken. The crop from the passthrough camera goes to Gemma 4 E2B with the question. The answer is pinned in space next to the object. Depth adds real measurements to the prompt ("about 34 cm wide, 1.1 m away"), so you can ask about size and fit. |
+| **Tabletop Garden** | A 3×3 planter placed on a real table with depth. You garden by speaking (**Talk**) or typing through the Gallery's FunctionGemma 270M Tiny Garden model (plant, water, harvest). The model was trained on English commands, so English works best. You can also point ("water *these*") or play by hand with a watering can, seed packets, and pulling flowers. |
+| **What's That?** | Point at something in the room, with your index finger (hold still for a moment) or with a controller (pull the trigger). A ray and a reticle show where depth finds a real surface, with the live distance. Gemma names the object and describes it briefly, in the language set in the main menu. The card pinned beside the object and the spoken reply give its distance from you, measured by depth rather than guessed. The object is highlighted: a live depth outline follows your pointing, and on selection an on-device interactive segmentation model (MediaPipe's magic touch, run with LiteRT in about 0.2 s) cuts it out of the camera image. |
 
 The project is built on the open-source on-device AI stack from [Google AI Edge](https://github.com/google-ai-edge):
 the Gallery app's experiences, the LiteRT-LM runtime, and the LiteRT-LM models published for it.
 
-**Language.** The main menu sets one language, **English** or **Italiano**, for the whole app: every model reply, the
-voice that reads it and speech input. The reply is kept in that language even when a persona or your instructions are
-written in another, so a reply never mixes languages or switches voices.
+### Language, voices and speech input
 
-Replies in every experience can be spoken by neural voices (Piper, through sherpa-onnx). The system text-to-speech
-engine on Quest is disabled.
+**Language.** The **English** / **Italiano** buttons at the top right of the main menu set one language for the whole
+app, and the choice is remembered between sessions. It sets:
+
+- the language of every model reply, in every experience;
+- the voice that reads the reply aloud;
+- the language speech input listens for.
+
+Each conversation's system prompt ends with a rule to reply only in that language, so replies stay in it even when a
+chat persona, your instructions or a requested style (a pirate, say) are written in another. In Italian, a short
+reminder is also added to each message sent to the model; the conversation you see keeps your own words. The voice is
+fixed to the chosen language for the whole reply, so it never switches partway through.
+
+**Voices.** Replies are read by neural voices (Piper, through sherpa-onnx): "alba" for English and "paola" for Italian.
+Download them in the main menu; **Test voice** plays a sample. **Voice on / Voice off** on every panel mutes or unmutes
+replies for the whole app. The system text-to-speech engine on Quest is disabled.
 
 **Speech input.** Press **Talk** in Chat, Point & Ask or Tabletop Garden, speak, and press **Stop**. Whisper base
-(through sherpa-onnx) turns your words into text on the headset, in the language set in the main menu, in about a
-second and a half. The audio never leaves the headset. Download "Speech input" in the main menu first; the app asks for
-the microphone permission the first time you talk.
+(int8, through sherpa-onnx) turns your words into text on the headset, in the main-menu language, in about a second and
+a half. The audio never leaves the headset.
+
+- **Download:** "Speech input · Whisper base" in the main menu (161 MB). **Try it** records a few words and shows what
+  was heard.
+- **Microphone:** the app asks for the permission the first time you talk.
+- **What happens to the words:** in Chat and Garden they are sent as your message; in Point & Ask they fill in the
+  question.
+- **Limits:** a recording stops by itself after about 28 seconds (Whisper reads 30 s at most). Silence or a very short
+  press returns nothing rather than invented text. Reading aloud stops while you talk, so the reply isn't recorded.
+
+### My instructions
 
 **My instructions** lets you tell the model, in plain words, how to reply. For example: "I'm on a strict diet. If I
 point at cake or junk food, make fun of me for it." The instructions apply in Spatial Chat, Point & Ask and What's That?,
@@ -56,10 +77,11 @@ What's That? panel. It offers a few presets (Strict diet, Kid-friendly, Plant lo
    "<Unity.exe>" -batchmode -quit -projectPath . -buildTarget Android -logFile -
    ```
 
-4. On the headset, allow camera and spatial data access when asked. The **launcher** panel opens in front of you.
-   From it you download the models and the voices, then open an experience.
+4. On the headset, allow camera and spatial data access when asked. The **launcher** panel (main menu) opens in front
+   of you. Pick **English** or **Italiano** at the top right, download the models, the voices and speech input, then
+   open an experience. The microphone permission is asked the first time you press **Talk**.
 
-### Models and voices
+### Models, voices and speech input
 
 Downloads go to the app's storage (`/sdcard/Android/data/<package>/files/`) and are pinned to fixed Hugging Face
 commits. They resume after interruption and can be deleted from the launcher.
@@ -107,13 +129,15 @@ Notes:
 
 - **Bridge:** the Kotlin bridge is a Gradle library module that Unity builds with the app. LiteRT-LM
   (`com.google.ai.edge.litertlm:litertlm-android:0.18.1`) comes from Maven. Its manifest entries are merged by Gradle,
-  so the SDK-generated `Assets/Plugins/Android/AndroidManifest.xml` is never edited by hand.
+  so the SDK-generated `Assets/Plugins/Android/AndroidManifest.xml` is never edited by hand. The bridge's own manifest
+  declares the camera and microphone (`RECORD_AUDIO`) permissions.
 - **Rig:** the rig stays the template's XR Origin. Depth uses MRUK's `EnvironmentRaycastManager`, and image input uses
   Passthrough Camera Access.
 
 ## Testing
 
-**EditMode unit tests** (text processing, chat history, garden rules, depth math, catalog, downloads):
+**EditMode unit tests** (text processing, chat history, garden rules, depth math, catalog, downloads, app language and
+reply prompts, personal instructions, voice and speech-input packs):
 
 ```bash
 "<Unity.exe>" -batchmode -projectPath . -runTests -testPlatform EditMode -testFilter AIEdge -testResults results.xml -logFile -
@@ -129,8 +153,10 @@ Notes:
    - My instructions: `instructions`, `instructions_it`
    - Garden: `garden`, `garden_view`
    - Depth: `depth`, `depth_ask`, `depth_place`, `depth_garden`
-   - Voice: `speech`, `speech_it`
-   - Speech input: `stt`
+   - Voice: `speech`, `speech_it` (with Italiano and an English instruction on, the reply must be all Italian and
+     read only by the Italian voice)
+   - Speech input: `stt` (each voice says a known sentence, Whisper must transcribe it in that language; then a short
+     real microphone recording)
 3. Results are logged as `SELFTEST|{json}` lines (logcat tag `Unity`) and written to `selftest_results.txt` in the same folder.
 4. Delete `selftest.json` afterwards, or the tests run on every launch.
 
@@ -139,8 +165,8 @@ Notes:
 Thanks to the [Google AI Edge](https://github.com/google-ai-edge) team. This port would not exist without their
 open-source Gallery app and LiteRT-LM runtime.
 
-This repository contains only original code and Unity template assets. The models and the voices are downloaded at
-runtime under their own terms:
+This repository contains only original code and Unity template assets. The models, the voices and the speech
+recognition model are downloaded at runtime under their own terms:
 
 | Component | License / terms |
 |---|---|
