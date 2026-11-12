@@ -59,6 +59,7 @@ namespace AIEdge.Diagnostics
             await Run("instructions", TestInstructions);
             await Run("instructions_it", TestInstructionsItalian);
             await Run("stt", TestSpeechInput);
+            await Run("mic_gesture", TestMicGesture);
             await Run("depth_place", TestDepthPlace);
             await Run("depth_garden", TestDepthGarden);
 
@@ -862,6 +863,87 @@ namespace AIEdge.Diagnostics
 
             static HashSet<string> Words(string text) => new HashSet<string>(
                 Regex.Matches(text.ToLowerInvariant(), @"[\p{L}']+").Cast<Match>().Select(m => m.Value));
+        }
+
+        // The mic gesture, with a simulated fist: in Chat, holding it at the mouth starts listening with the start tone and
+        // symbol, moving it away stops with the stop tone and uses what was heard; with no panel that takes speech it
+        // only shows a hint. Also reports what the real hands and controllers read right now.
+        async Awaitable<string> TestMicGesture()
+        {
+            var gesture = AIEdge.Interaction.MicGesture.Instance;
+            var feedback = AIEdge.UI.MicFeedback.Instance;
+            var input = SpeechInput.Instance;
+            if (gesture == null || feedback == null || input == null)
+                throw new Exception("MicGesture, MicFeedback or SpeechInput is missing.");
+            var report = new StringBuilder();
+            report.Append($"live tracking: {gesture.Source ?? "nothing"} at {gesture.Distance:0.00} m; ");
+
+            var deadline = Time.realtimeSinceStartup + 60f;
+            while (!input.IsReady && Time.realtimeSinceStartup < deadline)
+                await Awaitable.NextFrameAsync();
+            if (!input.IsReady)
+                throw new TimeoutException($"Speech input isn't ready ({input.State}): {input.Info}");
+
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            try
+            {
+                // No panel that takes speech: a hint, no recording.
+                foreach (var close in new Action[] { () => { if (app.Chat.IsOpen) app.Chat.Close(); }, () => { if (app.AskImage.IsOpen) app.AskImage.Close(); }, () => { if (app.Garden.IsOpen) app.Garden.Close(); } })
+                    close();
+                await Awaitable.NextFrameAsync();
+                gesture.Simulate(true, 0.05f);
+                await Awaitable.WaitForSecondsAsync(0.8f);
+                var hintShown = feedback.IsShown;
+                var recordedWithoutPanel = input.IsRecording;
+                gesture.Simulate(true, 0.6f);
+                await Awaitable.WaitForSecondsAsync(1.2f);
+                report.Append($"no panel: hint shown {hintShown}, recording {recordedWithoutPanel}; ");
+                if (recordedWithoutPanel || !hintShown)
+                    throw new Exception("Without a panel that takes speech the gesture should only show a hint. " + report);
+
+                // In Chat: start, listen, stop.
+                app.OpenChat();
+                await Awaitable.NextFrameAsync();
+                var starts = feedback.StartCount;
+                var stops = feedback.StopCount;
+                var startedAt = Time.realtimeSinceStartup;
+                gesture.Simulate(true, 0.05f);
+                deadline = Time.realtimeSinceStartup + 3f;
+                while (!input.IsRecording && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+                var startDelay = Time.realtimeSinceStartup - startedAt;
+                if (!input.IsRecording)
+                    throw new Exception("Holding the fist at the mouth didn't start listening. " + report);
+                await Awaitable.NextFrameAsync();
+                var signalledStart = feedback.StartCount == starts + 1 && feedback.IsShown;
+
+                // A loosened fist at the mouth keeps listening.
+                gesture.Simulate(false, 0.08f);
+                await Awaitable.WaitForSecondsAsync(3f);
+                var stillListening = input.IsRecording;
+
+                gesture.Simulate(true, 0.6f);
+                deadline = Time.realtimeSinceStartup + 3f;
+                while (input.IsRecording && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+                await Awaitable.NextFrameAsync();
+                var signalledStop = feedback.StopCount == stops + 1;
+                deadline = Time.realtimeSinceStartup + 20f;
+                while (input.State == SpeechInput.Status.Transcribing && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+
+                report.Append($"chat: listening after {startDelay:0.00}s, start signalled {signalledStart}, kept listening with a loose fist {stillListening}, " +
+                    $"stopped {!input.IsRecording}, stop signalled {signalledStop}, then {input.State}");
+                if (!signalledStart || !stillListening || input.IsRecording || !signalledStop)
+                    throw new Exception("The gesture didn't run start → listen → stop with its signals. " + report);
+                return report.ToString();
+            }
+            finally
+            {
+                gesture.Simulate(null);
+                if (app.Chat.IsOpen)
+                    app.Chat.Close();
+            }
         }
 
         // Personal instructions written in English, with What's That? set to Italiano: every sentence of the reply is in

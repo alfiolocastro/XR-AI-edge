@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -7,9 +8,22 @@ namespace AIEdge.UI
     /// <summary>
     /// Push-to-talk button for <see cref="SpeechInput"/>: press to start talking, press again to stop. The words heard,
     /// in the app language, go to the panel's callback. Shows how long it has been listening and the voice level.
+    /// The mic gesture (<see cref="AIEdge.Interaction.MicGesture"/>) drives the button of the open panel the same way.
     /// </summary>
     public class MicButton : MonoBehaviour
     {
+        // Buttons on open panels, most recently shown last.
+        static readonly List<MicButton> s_Visible = new List<MicButton>();
+
+        /// <summary>The Talk button of the most recently opened panel that has one, or null.</summary>
+        public static MicButton Current => s_Visible.Count > 0 ? s_Visible[s_Visible.Count - 1] : null;
+
+        /// <summary>True while this button is listening.</summary>
+        public bool IsListening => m_Listening;
+
+        /// <summary>True while this button is starting or transcribing.</summary>
+        public bool IsBusy => m_Busy;
+
         Button m_Button;
         Action<string> m_OnText;
         Action<string> m_OnStatus;
@@ -30,11 +44,32 @@ namespace AIEdge.UI
             return button;
         }
 
+        void OnEnable()
+        {
+            s_Visible.Remove(this);
+            s_Visible.Add(this);
+        }
+
         void OnDisable()
         {
+            s_Visible.Remove(this);
             if (m_Listening)
                 SpeechInput.Instance?.Cancel();
             m_Listening = false;
+        }
+
+        /// <summary>Starts listening, from the mic gesture. Does nothing if already listening or busy.</summary>
+        public void BeginFromGesture()
+        {
+            if (!m_Listening && !m_Busy)
+                StartListening();
+        }
+
+        /// <summary>Stops listening and uses what was said, from the mic gesture.</summary>
+        public void EndFromGesture()
+        {
+            if (m_Listening)
+                Finish();
         }
 
         void Update()
@@ -67,20 +102,26 @@ namespace AIEdge.UI
             m_Button.interactable = !(m_Busy && !m_Listening);
         }
 
-        async void OnPressed()
+        void OnPressed()
+        {
+            if (m_Listening)
+                Finish();
+            else
+                StartListening();
+        }
+
+        async void StartListening()
         {
             var input = SpeechInput.Instance;
-            if (m_Listening)
-            {
-                Finish();
-                return;
-            }
-
             if (input == null || !input.IsReady)
             {
-                m_OnStatus?.Invoke(input != null && input.State == SpeechInput.Status.Loading
-                    ? "Speech input is loading…"
-                    : "To talk, download \"Speech input\" in the main menu.");
+                var hint = input != null && input.State == SpeechInput.Status.Loading
+                    ? (AppLanguage.IsItalian ? "L'input vocale si sta caricando…" : "Speech input is loading…")
+                    : (AppLanguage.IsItalian
+                        ? "Per parlare, scarica \"Speech input\" nel menu principale."
+                        : "To talk, download \"Speech input\" in the main menu.");
+                m_OnStatus?.Invoke(hint);
+                MicFeedback.ShowHint(hint);
                 return;
             }
 
@@ -90,6 +131,7 @@ namespace AIEdge.UI
             if (!started)
             {
                 m_OnStatus?.Invoke(input.Info);
+                MicFeedback.ShowHint(input.Info);
                 return;
             }
 
@@ -115,7 +157,9 @@ namespace AIEdge.UI
 
             if (string.IsNullOrWhiteSpace(result.Text))
             {
-                m_OnStatus?.Invoke(AppLanguage.IsItalian ? "Non ho sentito niente." : "I didn't hear anything.");
+                var nothing = AppLanguage.IsItalian ? "Non ho sentito niente." : "I didn't hear anything.";
+                m_OnStatus?.Invoke(nothing);
+                MicFeedback.ShowHint(nothing);
                 return;
             }
 

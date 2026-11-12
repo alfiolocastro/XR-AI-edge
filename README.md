@@ -46,6 +46,26 @@ a half. The audio never leaves the headset.
 - **Limits:** a recording stops by itself after about 28 seconds (Whisper reads 30 s at most). Silence or a very short
   press returns nothing rather than invented text. Reading aloud stops while you talk, so the reply isn't recorded.
 
+**Mic gesture.** Instead of pressing **Talk**, hold your hand to your mouth as if gripping a microphone:
+
+- **Hand tracking:** make a closed fist and bring the top of it (thumb and index knuckle) to your mouth.
+- **Controllers:** bring the controller to your mouth.
+
+Hold it there for about a third of a second and listening starts; speak, then lower your hand or controller and what
+you said is transcribed and used, exactly as with the Talk button. It drives the Talk button of the open panel (Chat,
+Point & Ask or Tabletop Garden). With no such panel open, it only shows a hint. While you speak, the fist can loosen a
+little without stopping.
+
+**Start and stop signals.** However listening starts (Talk button, mic gesture, or **Try it** in the main menu):
+
+- **Start:** a rising two-note tone and a red microphone symbol, low in your field of view, whose ring pulses with your
+  voice and shows the seconds recorded.
+- **Stop:** a falling tone and a grey crossed-out microphone, then "Transcribing…" until the text is ready.
+- **Hints** (no panel to talk to, speech input not downloaded, nothing heard) show under a blue microphone with a soft
+  tone.
+
+The first quarter second of each recording is dropped, so the start tone isn't transcribed.
+
 ### My instructions
 
 **My instructions** lets you tell the model, in plain words, how to reply. For example: "I'm on a strict diet. If I
@@ -115,7 +135,8 @@ Assets/AIEdge/                 All port code (asmdef AIEdge, namespace AIEdge)
   Camera/                      Passthrough camera capture and crops
   Spatial/                     Depth service, depth-based measurement and placement
   Experiences/Chat|AskImage|TinyGarden|WhatsThat/
-  UI/                          Launcher, UI factory, Markdown → TextMeshPro, voice toggle, Talk button
+  Interaction/                 Mic gesture (fist or controller at the mouth) and its geometry
+  UI/                          Launcher, UI factory, Markdown → TextMeshPro, voice toggle, Talk button, mic signals
   Diagnostics/SelfTest.cs      On-device self-tests
   Tests/Editor/                EditMode unit tests
 Assets/Plugins/Android/LiteRtBridge.androidlib/
@@ -137,7 +158,7 @@ Notes:
 ## Testing
 
 **EditMode unit tests** (text processing, chat history, garden rules, depth math, catalog, downloads, app language and
-reply prompts, personal instructions, voice and speech-input packs):
+reply prompts, personal instructions, voice and speech-input packs, mic gesture):
 
 ```bash
 "<Unity.exe>" -batchmode -projectPath . -runTests -testPlatform EditMode -testFilter AIEdge -testResults results.xml -logFile -
@@ -156,7 +177,9 @@ reply prompts, personal instructions, voice and speech-input packs):
    - Voice: `speech`, `speech_it` (with Italiano and an English instruction on, the reply must be all Italian and
      read only by the Italian voice)
    - Speech input: `stt` (each voice says a known sentence, Whisper must transcribe it in that language; then a short
-     real microphone recording)
+     real microphone recording), `mic_gesture` (a simulated fist at the mouth: only a hint with no panel open; in Chat
+     it starts listening with the start signal, keeps listening while the fist loosens, and stops with the stop signal
+     when moved away)
 3. Results are logged as `SELFTEST|{json}` lines (logcat tag `Unity`) and written to `selftest_results.txt` in the same folder.
 4. Delete `selftest.json` afterwards, or the tests run on every launch.
 

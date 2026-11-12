@@ -1,5 +1,6 @@
 using AIEdge.AskImage;
 using AIEdge.Chat;
+using AIEdge.Interaction;
 using AIEdge.Spike;
 using AIEdge.TinyGarden;
 using AIEdge.UI;
@@ -63,6 +64,11 @@ namespace AIEdge
                 m_Instructions = new GameObject("Instructions").AddComponent<InstructionsPanel>();
             if (FindAnyObjectByType<SpeechInput>() == null)
                 gameObject.AddComponent<SpeechInput>();
+            // Voice input by holding a fist or a controller to the mouth, signalled with a tone and a mic symbol.
+            if (FindAnyObjectByType<MicFeedback>() == null)
+                gameObject.AddComponent<MicFeedback>();
+            if (FindAnyObjectByType<MicGesture>() == null)
+                gameObject.AddComponent<MicGesture>();
         }
 
         async void Start()

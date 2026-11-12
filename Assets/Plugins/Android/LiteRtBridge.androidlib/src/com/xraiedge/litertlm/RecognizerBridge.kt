@@ -114,8 +114,10 @@ class RecognizerBridge(
     val samples: FloatArray
     var peak = 0f
     synchronized(lock) {
-      samples = FloatArray(recordedCount) { i ->
-        val value = recorded[i] / 32768f
+      // The app's "listening" tone plays as recording starts; leave it out of what Whisper hears.
+      val skip = minOf(recordedCount, (SAMPLE_RATE * LEAD_IN_SECONDS).toInt())
+      samples = FloatArray(recordedCount - skip) { i ->
+        val value = recorded[i + skip] / 32768f
         peak = maxOf(peak, kotlin.math.abs(value))
         value
       }
@@ -289,5 +291,6 @@ class RecognizerBridge(
     private const val MAX_SECONDS = 28
     private const val MIN_SECONDS = 0.4f
     private const val MIN_PEAK = 0.01f
+    private const val LEAD_IN_SECONDS = 0.25f
   }
 }
