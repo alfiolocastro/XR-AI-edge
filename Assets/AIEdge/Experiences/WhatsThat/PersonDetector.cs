@@ -26,10 +26,28 @@ namespace AIEdge.WhatsThat
         /// <summary>Center of the person in the world (valid when <see cref="Distance"/> is).</summary>
         public Vector3 Position;
 
+        /// <summary>Detector confidence smoothed over the last sightings.</summary>
+        public float SmoothedScore;
+
+        /// <summary>How fast they come closer, in meters a second (negative when moving away).</summary>
+        public float ApproachSpeed;
+
+        /// <summary>True while the targeting display is shown (high, steady confidence).</summary>
+        public bool IsTargeted;
+
+        /// <summary>Threat level shown on the targeting display, from proximity.</summary>
+        public ThreatLevel Threat => PersonMath.Threat(Distance, ApproachSpeed);
+
         internal float LastSeen;
         internal RectTransform Frame;
         internal TextMeshProUGUI Label;
+        internal TextMeshProUGUI Hud;
+        internal readonly List<Image> Edges = new List<Image>();
         internal bool Placed;
+        internal float TargetedAt;
+        internal float LastDistance = float.NaN;
+        internal float LastDistanceTime;
+        internal bool HudDimmed;
     }
 
     /// <summary>
@@ -48,7 +66,12 @@ namespace AIEdge.WhatsThat
         const float k_FrameUnitsPerMeter = 1000f;
         const float k_Border = 6f;
 
+        const float k_HudCharsPerSecond = 90f;
+        const float k_BlinkRate = 3f;
+
         static readonly Color k_FrameColor = new Color(1f, 0.78f, 0.25f, 0.9f);
+        static readonly Color k_TargetColor = new Color(1f, 0.12f, 0.08f, 0.95f);
+        static readonly Color k_HudColor = new Color(1f, 0.3f, 0.24f, 1f);
 
         [SerializeField, Tooltip("Seconds between detections.")]
         float m_Interval = 0.2f;
@@ -153,6 +176,17 @@ namespace AIEdge.WhatsThat
                 Destroy(m_People[i].Frame.gameObject);
                 m_People.RemoveAt(i);
                 Updated?.Invoke();
+            }
+
+            // The targeting display types itself out, and a high threat level blinks.
+            foreach (var person in m_People)
+            {
+                if (!person.IsTargeted)
+                    continue;
+                person.Hud.maxVisibleCharacters = (int)((Time.unscaledTime - person.TargetedAt) * k_HudCharsPerSecond);
+                var dim = person.Threat == ThreatLevel.High && (int)(Time.unscaledTime * k_BlinkRate * 2f) % 2 == 1;
+                if (dim != person.HudDimmed)
+                    RefreshHud(person, dim);
             }
 
             if (m_FrameRoot.gameObject.activeSelf != ShowFrames)
@@ -361,11 +395,62 @@ namespace AIEdge.WhatsThat
                     m_People.Add(person);
                 }
 
+                var isNew = person.LastSeen == 0f;
                 person.Viewport = boxes[i].Viewport;
                 person.Score = boxes[i].Score;
+                person.SmoothedScore = isNew ? person.Score : Mathf.Lerp(person.SmoothedScore, person.Score, 0.4f);
                 person.LastSeen = Time.unscaledTime;
                 Place(person, pose);
+                UpdateTargeting(person);
             }
+        }
+
+        /// <summary>
+        /// Adds a detection as if the camera had just seen it (for tests: there may be nobody in the room). Call it
+        /// repeatedly to keep the person tracked.
+        /// </summary>
+        public void InjectForTests(PersonBox box)
+        {
+            if (m_Camera == null)
+                m_Camera = FindAnyObjectByType<PassthroughFrameCapture>();
+            if (m_Camera == null || !m_Camera.IsReady)
+                return;
+            Apply(new List<PersonBox> { box }, m_Camera.GetWorldCameraPose());
+            Updated?.Invoke();
+        }
+
+        // Steady, high confidence turns the frame red and shows the targeting display; it types itself out each time
+        // a person becomes a target.
+        void UpdateTargeting(TrackedPerson person)
+        {
+            var targeted = PersonMath.IsTargeted(person.IsTargeted, person.SmoothedScore);
+            if (targeted != person.IsTargeted)
+            {
+                person.IsTargeted = targeted;
+                person.TargetedAt = Time.unscaledTime;
+                foreach (var edge in person.Edges)
+                    edge.color = targeted ? k_TargetColor : k_FrameColor;
+                person.Label.gameObject.SetActive(!targeted);
+                person.Hud.gameObject.SetActive(targeted);
+                person.Hud.maxVisibleCharacters = 0;
+            }
+
+            if (targeted)
+                RefreshHud(person, person.HudDimmed);
+        }
+
+        static void RefreshHud(TrackedPerson person, bool dim)
+        {
+            person.HudDimmed = dim;
+            // Beside the frame on the side with more room, so it stays in view.
+            var left = person.Viewport.center.x > 0.6f;
+            var rect = person.Hud.rectTransform;
+            rect.anchorMin = rect.anchorMax = new Vector2(left ? 0f : 1f, 1f);
+            rect.pivot = new Vector2(left ? 1f : 0f, 1f);
+            rect.anchoredPosition = new Vector2(left ? -24f : 24f, 0f);
+            person.Hud.alignment = left ? TextAlignmentOptions.TopRight : TextAlignmentOptions.TopLeft;
+            person.Hud.text = "<mspace=0.62em>" +
+                PersonMath.ThreatHud(person.SmoothedScore, person.Distance, person.ApproachSpeed, AppLanguage.Current, dim);
         }
 
         void Place(TrackedPerson person, Pose pose)
@@ -394,6 +479,20 @@ namespace AIEdge.WhatsThat
             }
 
             person.Distance = distance;
+            // Approach speed, smoothed: depth is noisy by a few centimeters from frame to frame.
+            if (!float.IsNaN(distance))
+            {
+                var now = Time.unscaledTime;
+                if (!float.IsNaN(person.LastDistance) && now - person.LastDistanceTime > 0.01f)
+                {
+                    var speed = (person.LastDistance - distance) / (now - person.LastDistanceTime);
+                    person.ApproachSpeed = Mathf.Lerp(person.ApproachSpeed, speed, 0.3f);
+                }
+
+                person.LastDistance = distance;
+                person.LastDistanceTime = now;
+            }
+
             if (float.IsNaN(distance))
             {
                 // No depth: keep the last placement (or hide until there is one).
@@ -445,10 +544,25 @@ namespace AIEdge.WhatsThat
             frame.localScale = Vector3.one / k_FrameUnitsPerMeter;
             frame.sizeDelta = new Vector2(500f, 1500f);
 
-            Bar(frame, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, -k_Border)); // top
-            Bar(frame, new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0f, k_Border)); // bottom
-            Bar(frame, new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(k_Border, 0f)); // left
-            Bar(frame, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(-k_Border, 0f)); // right
+            person.Edges.Add(Bar(frame, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, -k_Border))); // top
+            person.Edges.Add(Bar(frame, new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0f, k_Border))); // bottom
+            person.Edges.Add(Bar(frame, new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(k_Border, 0f))); // left
+            person.Edges.Add(Bar(frame, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(-k_Border, 0f))); // right
+
+            // The targeting display: monospaced capitals beside the top right corner, shown for high confidence.
+            var hud = UiFactory.CreateText(frame, "Targeting", "", 30, TextAlignmentOptions.TopLeft);
+            hud.color = k_HudColor;
+            hud.fontStyle = FontStyles.Bold;
+            hud.textWrappingMode = TextWrappingModes.NoWrap;
+            hud.lineSpacing = 8f;
+            var hudRect = hud.rectTransform;
+            hudRect.anchorMin = new Vector2(1f, 1f);
+            hudRect.anchorMax = new Vector2(1f, 1f);
+            hudRect.pivot = new Vector2(0f, 1f);
+            hudRect.sizeDelta = new Vector2(560f, 260f);
+            hudRect.anchoredPosition = new Vector2(24f, 0f);
+            hud.gameObject.SetActive(false);
+            person.Hud = hud;
 
             var label = UiFactory.CreateText(frame, "Label", "", 40, TextAlignmentOptions.Bottom);
             label.color = k_FrameColor;
@@ -466,7 +580,7 @@ namespace AIEdge.WhatsThat
             go.SetActive(false);
         }
 
-        static void Bar(RectTransform parent, Vector2 anchorMin, Vector2 anchorMax, Vector2 thickness)
+        static Image Bar(RectTransform parent, Vector2 anchorMin, Vector2 anchorMax, Vector2 thickness)
         {
             var bar = UiFactory.CreateImage(parent, "Edge", k_FrameColor);
             bar.raycastTarget = false;
@@ -477,6 +591,7 @@ namespace AIEdge.WhatsThat
             rect.offsetMin = Vector2.zero;
             rect.offsetMax = Vector2.zero;
             rect.sizeDelta = new Vector2(Mathf.Abs(thickness.x), Mathf.Abs(thickness.y));
+            return bar;
         }
 
         class ListenerProxy : AndroidJavaProxy

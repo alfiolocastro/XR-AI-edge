@@ -16,6 +16,15 @@ namespace AIEdge.WhatsThat
         public float Score;
     }
 
+    /// <summary>How close a person is, for the targeting display.</summary>
+    public enum ThreatLevel
+    {
+        Unknown,
+        Low,
+        Medium,
+        High,
+    }
+
     /// <summary>
     /// Geometry for person detection: converting the detector's boxes to camera viewport rectangles, matching boxes
     /// between frames so their frames move smoothly instead of flickering, and the summary line. Plain C# so it can be
@@ -117,6 +126,66 @@ namespace AIEdge.WhatsThat
                 ? (count == 1 ? "1 persona in vista" : $"{count} persone in vista")
                 : (count == 1 ? "1 person in view" : $"{count} people in view");
             return $"{head}: {string.Join(" · ", parts)}";
+        }
+
+        /// <summary>Smoothed score at or above which a person is targeted.</summary>
+        public const float TargetScore = 0.7f;
+
+        /// <summary>Smoothed score below which a targeted person is let go (lower, so the display doesn't flicker).</summary>
+        public const float ReleaseScore = 0.6f;
+
+        /// <summary>Approach speed, in meters a second, above which a person counts as approaching.</summary>
+        public const float ApproachingSpeed = 0.3f;
+
+        /// <summary>Whether a person is targeted, with hysteresis between <see cref="TargetScore"/> and <see cref="ReleaseScore"/>.</summary>
+        public static bool IsTargeted(bool wasTargeted, float smoothedScore) =>
+            smoothedScore >= (wasTargeted ? ReleaseScore : TargetScore);
+
+        /// <summary>
+        /// Threat level from proximity alone (nothing about who the person is): within 1.2 m high, within 2.5 m medium,
+        /// farther low; one level up while they approach.
+        /// </summary>
+        public static ThreatLevel Threat(float distance, float approachSpeed)
+        {
+            if (float.IsNaN(distance) || distance <= 0f)
+                return ThreatLevel.Unknown;
+            var level = distance < 1.2f ? ThreatLevel.High : distance < 2.5f ? ThreatLevel.Medium : ThreatLevel.Low;
+            if (approachSpeed > ApproachingSpeed && level < ThreatLevel.High)
+                level++;
+            return level;
+        }
+
+        /// <summary>
+        /// The targeting display beside a high-confidence person: target, match, range, approach and threat level, in
+        /// capitals. With <paramref name="dimThreat"/> the threat line is dimmed (it blinks when high).
+        /// </summary>
+        public static string ThreatHud(float score, float distance, float approachSpeed, string language, bool dimThreat = false)
+        {
+            var italian = language == SpeechLanguage.Italian;
+            var culture = italian ? CultureInfo.GetCultureInfo("it-IT") : CultureInfo.InvariantCulture;
+            var level = Threat(distance, approachSpeed);
+            var range = float.IsNaN(distance) || distance <= 0f ? "--" : $"{distance.ToString("0.0", culture)} M";
+            var match = Mathf.RoundToInt(Mathf.Clamp01(score) * 100f);
+            string levelName;
+            switch (level)
+            {
+                case ThreatLevel.Low: levelName = italian ? "BASSO" : "LOW"; break;
+                case ThreatLevel.Medium: levelName = italian ? "MEDIO" : "MEDIUM"; break;
+                case ThreatLevel.High: levelName = italian ? "ALTO" : "HIGH"; break;
+                default: levelName = italian ? "SCONOSCIUTO" : "UNKNOWN"; break;
+            }
+
+            var lines = new List<string>
+            {
+                italian ? "BERSAGLIO: UMANO" : "TARGET: HUMAN",
+                (italian ? "CORRISPONDENZA " : "MATCH ") + match + "%",
+                (italian ? "DISTANZA " : "RANGE ") + range,
+            };
+            if (approachSpeed > ApproachingSpeed && level != ThreatLevel.Unknown)
+                lines.Add(italian ? "IN AVVICINAMENTO" : "APPROACHING");
+            var threat = (italian ? "LIVELLO DI MINACCIA: " : "THREAT LEVEL: ") + levelName;
+            lines.Add(dimThreat ? $"<alpha=#33>{threat}<alpha=#FF>" : threat);
+            return string.Join("\n", lines);
         }
     }
 }

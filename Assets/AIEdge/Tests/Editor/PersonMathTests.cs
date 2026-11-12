@@ -66,6 +66,41 @@ namespace AIEdge.Tests
         }
 
         [Test]
+        public void Threat_RisesWithProximityAndApproach()
+        {
+            Assert.That(PersonMath.Threat(float.NaN, 0f), Is.EqualTo(ThreatLevel.Unknown));
+            Assert.That(PersonMath.Threat(4f, 0f), Is.EqualTo(ThreatLevel.Low));
+            Assert.That(PersonMath.Threat(2f, 0f), Is.EqualTo(ThreatLevel.Medium));
+            Assert.That(PersonMath.Threat(1f, 0f), Is.EqualTo(ThreatLevel.High));
+            // Coming closer raises it one level, but never past high; moving away doesn't lower it.
+            Assert.That(PersonMath.Threat(4f, 0.5f), Is.EqualTo(ThreatLevel.Medium));
+            Assert.That(PersonMath.Threat(1f, 0.5f), Is.EqualTo(ThreatLevel.High));
+            Assert.That(PersonMath.Threat(2f, -1f), Is.EqualTo(ThreatLevel.Medium));
+        }
+
+        [Test]
+        public void IsTargeted_HoldsBetweenTheThresholds()
+        {
+            Assert.That(PersonMath.IsTargeted(false, 0.65f), Is.False);
+            Assert.That(PersonMath.IsTargeted(false, 0.75f), Is.True);
+            Assert.That(PersonMath.IsTargeted(true, 0.65f), Is.True);
+            Assert.That(PersonMath.IsTargeted(true, 0.55f), Is.False);
+        }
+
+        [Test]
+        public void ThreatHud_ShowsTargetRangeAndLevel()
+        {
+            Assert.That(PersonMath.ThreatHud(0.87f, 2.34f, 0f, SpeechLanguage.English),
+                Is.EqualTo("TARGET: HUMAN\nMATCH 87%\nRANGE 2.3 M\nTHREAT LEVEL: MEDIUM"));
+            Assert.That(PersonMath.ThreatHud(0.9f, 1f, 0.6f, SpeechLanguage.Italian),
+                Is.EqualTo("BERSAGLIO: UMANO\nCORRISPONDENZA 90%\nDISTANZA 1,0 M\nIN AVVICINAMENTO\nLIVELLO DI MINACCIA: ALTO"));
+            Assert.That(PersonMath.ThreatHud(0.8f, float.NaN, 0f, SpeechLanguage.English),
+                Does.Contain("RANGE --").And.EndsWith("THREAT LEVEL: UNKNOWN"));
+            Assert.That(PersonMath.ThreatHud(0.8f, 1f, 0f, SpeechLanguage.English, dimThreat: true),
+                Does.EndWith("<alpha=#33>THREAT LEVEL: HIGH<alpha=#FF>"));
+        }
+
+        [Test]
         public void Summary_CountsPeopleNearestFirst()
         {
             Assert.That(PersonMath.Summary(new float[0], SpeechLanguage.English), Is.EqualTo("No people in view"));

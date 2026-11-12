@@ -855,10 +855,29 @@ namespace AIEdge.Diagnostics
                     throw new Exception($"Only {rate:0.0} frames a second.");
 
                 var distances = detector.People.Select(p => p.Distance).ToList();
+                var summary = PersonMath.Summary(distances, SpeechLanguage.English);
+
+                // Targeting: a steady high-confidence person straight ahead (injected, as the room may be empty) gets
+                // the red display with a threat level.
+                TrackedPerson target = null;
+                var injectUntil = Time.realtimeSinceStartup + 8f; // long enough for a screenshot
+                while (Time.realtimeSinceStartup < injectUntil)
+                {
+                    detector.InjectForTests(new PersonBox { Viewport = new Rect(0.4f, 0.25f, 0.2f, 0.5f), Score = 0.9f });
+                    target = detector.People.FirstOrDefault(p => p.IsTargeted);
+                    await Awaitable.WaitForSecondsAsync(0.2f);
+                }
+
+                if (target == null)
+                    throw new Exception("A 90% person never became a target.");
+                if (target.Threat == ThreatLevel.Unknown)
+                    throw new Exception("The target has no distance, so no threat level.");
+                var hud = PersonMath.ThreatHud(target.SmoothedScore, target.Distance, target.ApproachSpeed, SpeechLanguage.English)
+                    .Replace("\n", " / ");
                 return $"photo: {fromFile.Count} people (file), {fromTexture.Count} (GPU), largest at " +
                     $"{fileBox.Viewport.center} score {fileBox.Score:0.00}, overlap {overlap:0.00}; live {rate:0.0} fps, " +
                     $"infer {detector.LastInferMs} ms, latency {detector.LastLatency * 1000f:0} ms, " +
-                    $"\"{PersonMath.Summary(distances, SpeechLanguage.English)}\"";
+                    $"\"{summary}\"; injected target: \"{hud}\"";
             }
             finally
             {

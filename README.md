@@ -11,7 +11,7 @@ Nothing is sent to a server. The app speaks and listens in **English** or **Ital
 | **Spatial Chat** | Multi-turn chat with Gemma 4 E2B on a world-locked panel. Type or press **Talk** and speak. Replies stream in and are read aloud. Past conversations are cards you can grab to resume. |
 | **Point & Ask** | Frame something in the real world with both hands (or point at it) and ask about it, typed or spoken. The crop from the passthrough camera goes to Gemma 4 E2B with the question. The answer is pinned in space next to the object. Depth adds real measurements to the prompt ("about 34 cm wide, 1.1 m away"), so you can ask about size and fit. |
 | **Tabletop Garden** | A 3×3 planter placed on a real table with depth. You garden by speaking (**Talk**) or typing through the Gallery's FunctionGemma 270M Tiny Garden model (plant, water, harvest). The model was trained on English commands, so English works best. You can also point ("water *these*") or play by hand with a watering can, seed packets, and pulling flowers. |
-| **What's That?** | Point at something in the room, with your index finger (hold still for a moment) or with a controller (pull the trigger). A ray and a reticle show where depth finds a real surface, with the live distance. Gemma names the object and describes it briefly, in the language set in the main menu. The card pinned beside the object and the spoken reply give its distance from you, measured by depth rather than guessed. The object is highlighted: a live depth outline follows your pointing, and on selection an on-device interactive segmentation model (MediaPipe's magic touch, run with LiteRT in about 0.2 s) cuts it out of the camera image. While the panel is open, people in view are found in the background (EfficientDet-Lite0 with LiteRT, about 4–5 frames a second): each one gets a frame in the room with their distance from depth ("Person · 2.3 m"), and the panel sums them up. Only boxes are found, nothing that identifies anyone. The People button turns it off. |
+| **What's That?** | Point at something in the room, with your index finger (hold still for a moment) or with a controller (pull the trigger). A ray and a reticle show where depth finds a real surface, with the live distance. Gemma names the object and describes it briefly, in the language set in the main menu. The card pinned beside the object and the spoken reply give its distance from you, measured by depth rather than guessed. The object is highlighted: a live depth outline follows your pointing, and on selection an on-device interactive segmentation model (MediaPipe's magic touch, run with LiteRT in about 0.2 s) cuts it out of the camera image. While the panel is open, people in view are found in the background (EfficientDet-Lite0 with LiteRT, about 4–5 frames a second): each one gets a frame in the room with their distance from depth ("Person · 2.3 m"), and the panel sums them up. A person detected with steady, high confidence (70% or more) is targeted: the frame turns red and a sci-fi targeting readout types itself out beside it (target, match, range and a threat level, LOW, MEDIUM or HIGH, from how close they are and whether they're approaching; HIGH blinks). Only boxes are found, nothing that identifies anyone. The People button turns it off. |
 
 The project is built on the open-source on-device AI stack from [Google AI Edge](https://github.com/google-ai-edge):
 the Gallery app's experiences, the LiteRT-LM runtime, and the LiteRT-LM models published for it.
@@ -158,7 +158,7 @@ Notes:
 ## Testing
 
 **EditMode unit tests** (text processing, chat history, garden rules, depth math, catalog, downloads, app language and
-reply prompts, personal instructions, voice and speech-input packs, mic gesture, person boxes and matching):
+reply prompts, personal instructions, voice and speech-input packs, mic gesture, person boxes, matching and threat levels):
 
 ```bash
 "<Unity.exe>" -batchmode -projectPath . -runTests -testPlatform EditMode -testFilter AIEdge -testResults results.xml -logFile -
@@ -173,7 +173,8 @@ reply prompts, personal instructions, voice and speech-input packs, mic gesture,
    - What's That?: `whats_that`, `people` (needs `people_test.jpg` next to `selftest.json`, such as TensorFlow's
      [beach test photo](https://github.com/tensorflow/models/blob/master/research/object_detection/test_images/image2.jpg):
      the people at its bottom left must be found from the file and through the live GPU path, then the live camera must
-     run at 2 frames a second or more)
+     run at 2 frames a second or more; finally an injected 90% person straight ahead must become a target with a
+     threat level)
    - My instructions: `instructions`, `instructions_it`
    - Garden: `garden`, `garden_view`
    - Depth: `depth`, `depth_ask`, `depth_place`, `depth_garden`
