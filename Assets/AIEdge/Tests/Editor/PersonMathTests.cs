@@ -66,6 +66,36 @@ namespace AIEdge.Tests
         }
 
         [Test]
+        public void Region_BoundsThePoints()
+        {
+            Assert.That(PersonMath.Region(new Vector2[0]), Is.Null);
+            var region = PersonMath.Region(new[] { new Vector2(0.6f, 0.1f), new Vector2(0.8f, 0.4f), new Vector2(0.7f, 0.2f) });
+            Assert.That(region, Is.EqualTo(Rect.MinMaxRect(0.6f, 0.1f, 0.8f, 0.4f)));
+        }
+
+        [Test]
+        public void IsOwnBody_DropsBoxesMostlyOnTheUsersHand()
+        {
+            // A hand and forearm raised at the lower right of the view.
+            var hand = new[] { Rect.MinMaxRect(0.6f, 0.0f, 0.9f, 0.5f) };
+            // The detector's "person" box around that hand.
+            Assert.That(PersonMath.IsOwnBody(Rect.MinMaxRect(0.58f, 0.0f, 0.92f, 0.55f), hand), Is.True);
+            // Someone standing across the room, partly behind the hand, is kept.
+            Assert.That(PersonMath.IsOwnBody(Rect.MinMaxRect(0.4f, 0.1f, 0.7f, 0.9f), hand), Is.False);
+            // Someone elsewhere, or no hands tracked: kept.
+            Assert.That(PersonMath.IsOwnBody(Rect.MinMaxRect(0.1f, 0.1f, 0.3f, 0.8f), hand), Is.False);
+            Assert.That(PersonMath.IsOwnBody(Rect.MinMaxRect(0.6f, 0.0f, 0.9f, 0.5f), new Rect[0]), Is.False);
+        }
+
+        [Test]
+        public void IsOwnBody_AddsBothHands()
+        {
+            // Both hands together in front of the face make one box; each hand covers only part of it.
+            var hands = new[] { Rect.MinMaxRect(0.3f, 0.2f, 0.5f, 0.6f), Rect.MinMaxRect(0.5f, 0.2f, 0.7f, 0.6f) };
+            Assert.That(PersonMath.IsOwnBody(Rect.MinMaxRect(0.3f, 0.2f, 0.7f, 0.6f), hands), Is.True);
+        }
+
+        [Test]
         public void Threat_RisesWithProximityAndApproach()
         {
             Assert.That(PersonMath.Threat(float.NaN, 0f), Is.EqualTo(ThreatLevel.Unknown));

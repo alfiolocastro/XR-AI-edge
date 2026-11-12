@@ -128,6 +128,45 @@ namespace AIEdge.WhatsThat
             return $"{head}: {string.Join(" · ", parts)}";
         }
 
+        /// <summary>The viewport rectangle around a set of projected points (null when there are none).</summary>
+        public static Rect? Region(IReadOnlyList<Vector2> points)
+        {
+            if (points.Count == 0)
+                return null;
+            var min = points[0];
+            var max = points[0];
+            foreach (var p in points)
+            {
+                min = Vector2.Min(min, p);
+                max = Vector2.Max(max, p);
+            }
+
+            return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
+        }
+
+        /// <summary>
+        /// True when a box is mostly the user's own body: at least <paramref name="minCovered"/> of it lies within the
+        /// regions of their hands and forearms (or controllers). The detector readily takes a hand held up in front of
+        /// the headset for a person, and depth can't measure it (the depth map leaves hands out), so its distance is
+        /// the wall behind.
+        /// </summary>
+        public static bool IsOwnBody(Rect box, IReadOnlyList<Rect> regions, float minCovered = 0.45f)
+        {
+            var area = box.width * box.height;
+            if (area <= 0f || regions.Count == 0)
+                return false;
+            var covered = 0f;
+            foreach (var region in regions)
+            {
+                var w = Mathf.Min(box.xMax, region.xMax) - Mathf.Max(box.xMin, region.xMin);
+                var h = Mathf.Min(box.yMax, region.yMax) - Mathf.Max(box.yMin, region.yMin);
+                if (w > 0f && h > 0f)
+                    covered += w * h;
+            }
+
+            return covered / area >= minCovered;
+        }
+
         /// <summary>Smoothed score at or above which a person is targeted.</summary>
         public const float TargetScore = 0.7f;
 

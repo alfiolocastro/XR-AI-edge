@@ -6,8 +6,10 @@ using AIEdge.UI;
 using TMPro;
 using Unity.Collections;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
 using UnityEngine.UI;
+using UnityEngine.XR.Hands;
 
 namespace AIEdge.WhatsThat
 {
@@ -117,12 +119,23 @@ namespace AIEdge.WhatsThat
         /// <summary>When set, the next frame sent to the detector is also saved there as a PNG (for tests).</summary>
         public string DumpNextFrame { get; set; }
 
+        /// <summary>Boxes ignored because they were the user's own hand or arm.</summary>
+        public int IgnoredOwnBody { get; private set; }
+
+        /// <summary>Where the user's hands and forearms (or controllers) were in the last frame, in viewport coordinates.</summary>
+        public IReadOnlyList<Rect> LastOwnBody { get; private set; } = Array.Empty<Rect>();
+
         /// <summary>Hides the frames (they stay tracked), for example while the panel is hidden.</summary>
         public bool ShowFrames { get; set; } = true;
 
         readonly ConcurrentQueue<Action> m_MainThread = new ConcurrentQueue<Action>();
         readonly List<TrackedPerson> m_People = new List<TrackedPerson>();
-        readonly Dictionary<string, (Pose pose, float time)> m_Requests = new Dictionary<string, (Pose, float)>();
+        readonly Dictionary<string, (Pose pose, float time, List<Rect> ownBody)> m_Requests =
+            new Dictionary<string, (Pose, float, List<Rect>)>();
+        readonly List<XRHandSubsystem> m_HandSubsystems = new List<XRHandSubsystem>();
+        readonly List<Vector2> m_Points = new List<Vector2>();
+        XRHandSubsystem m_Hands;
+        InputAction m_RightPosition, m_RightTracked, m_LeftPosition, m_LeftTracked;
         readonly Dictionary<string, AwaitableCompletionSource<List<PersonBox>>> m_TestRequests =
             new Dictionary<string, AwaitableCompletionSource<List<PersonBox>>>();
         AndroidJavaObject m_Bridge;
@@ -141,10 +154,26 @@ namespace AIEdge.WhatsThat
         void Awake()
         {
             m_FrameRoot = new GameObject("PeopleFrames").transform;
+            m_RightPosition = new InputAction("PeopleRightPosition", binding: "<XRController>{RightHand}/devicePosition");
+            m_RightTracked = new InputAction("PeopleRightTracked", InputActionType.Button, "<XRController>{RightHand}/isTracked");
+            m_LeftPosition = new InputAction("PeopleLeftPosition", binding: "<XRController>{LeftHand}/devicePosition");
+            m_LeftTracked = new InputAction("PeopleLeftTracked", InputActionType.Button, "<XRController>{LeftHand}/isTracked");
+        }
+
+        void OnEnable()
+        {
+            m_RightPosition.Enable();
+            m_RightTracked.Enable();
+            m_LeftPosition.Enable();
+            m_LeftTracked.Enable();
         }
 
         void OnDisable()
         {
+            m_RightPosition.Disable();
+            m_RightTracked.Disable();
+            m_LeftPosition.Disable();
+            m_LeftTracked.Disable();
             foreach (var person in m_People)
                 Destroy(person.Frame.gameObject);
             m_People.Clear();
@@ -204,7 +233,8 @@ namespace AIEdge.WhatsThat
             m_Next = Time.unscaledTime + m_Interval;
             // The pose is the camera's at this frame, so boxes are placed where the person was when it was taken.
             var id = (m_NextId++).ToString();
-            m_Requests[id] = (m_Camera.GetWorldCameraPose(), Time.unscaledTime);
+            var pose = m_Camera.GetWorldCameraPose();
+            m_Requests[id] = (pose, Time.unscaledTime, OwnBodyRegions(pose));
             Submit(texture, id);
         }
 
@@ -357,6 +387,9 @@ namespace AIEdge.WhatsThat
             if (!m_Requests.Remove(id, out var request) || !isActiveAndEnabled)
                 return;
             var boxes = Parse(json, out var inferMs);
+            // The user's own hand or arm is often taken for a person: drop boxes that are mostly them.
+            LastOwnBody = request.ownBody;
+            IgnoredOwnBody += boxes.RemoveAll(b => PersonMath.IsOwnBody(b.Viewport, request.ownBody));
             FrameCount++;
             LastInferMs = inferMs;
             LastLatency = Time.unscaledTime - request.time;
@@ -372,6 +405,99 @@ namespace AIEdge.WhatsThat
                 file.TrySetResult(new List<PersonBox>());
             Error = message;
             Debug.LogWarning($"[AIEdge] Person detection: {message}");
+        }
+
+        /// <summary>
+        /// The viewport regions covered by the user's hands and forearms (from hand tracking) or by the controllers and
+        /// the arms holding them, seen from the camera at <paramref name="pose"/>.
+        /// </summary>
+        public List<Rect> OwnBodyRegions(Pose pose)
+        {
+            var regions = new List<Rect>();
+            var main = UnityEngine.Camera.main;
+            if (m_Camera == null || !m_Camera.IsReady || main == null)
+                return regions;
+            var space = main.transform.parent;
+            Vector3 World(Vector3 p) => space != null ? space.TransformPoint(p) : p;
+            var inverse = Quaternion.Inverse(pose.rotation);
+            var right = pose.rotation * Vector3.right;
+            var up = pose.rotation * Vector3.up;
+
+            // A sphere of the given radius around a point, as its projected extremes.
+            void Add(Vector3 world, float radius)
+            {
+                if ((inverse * (world - pose.position)).z < 0.05f)
+                    return;
+                m_Points.Add(m_Camera.CameraAccess.WorldToViewportPoint(world + right * radius, pose));
+                m_Points.Add(m_Camera.CameraAccess.WorldToViewportPoint(world - right * radius, pose));
+                m_Points.Add(m_Camera.CameraAccess.WorldToViewportPoint(world + up * radius, pose));
+                m_Points.Add(m_Camera.CameraAccess.WorldToViewportPoint(world - up * radius, pose));
+            }
+
+            void AddLimb(Vector3 from, Vector3 to, float radius)
+            {
+                for (var t = 0f; t <= 1.001f; t += 0.25f)
+                    Add(Vector3.Lerp(from, to, t), radius);
+            }
+
+            void Close()
+            {
+                var region = PersonMath.Region(m_Points);
+                if (region.HasValue)
+                    regions.Add(region.Value);
+                m_Points.Clear();
+            }
+
+            if (m_Hands == null || !m_Hands.running)
+            {
+                m_HandSubsystems.Clear();
+                SubsystemManager.GetSubsystems(m_HandSubsystems);
+                m_Hands = m_HandSubsystems.Find(h => h.running);
+            }
+
+            var handTracked = new bool[2];
+            if (m_Hands != null)
+            {
+                var hands = new[] { m_Hands.rightHand, m_Hands.leftHand };
+                for (var h = 0; h < 2; h++)
+                {
+                    var hand = hands[h];
+                    if (!hand.isTracked)
+                        continue;
+                    handTracked[h] = true;
+                    for (var i = XRHandJointID.BeginMarker.ToIndex(); i < XRHandJointID.EndMarker.ToIndex(); i++)
+                        if (hand.GetJoint(XRHandJointIDUtility.FromIndex(i)).TryGetPose(out var joint))
+                            Add(World(joint.position), 0.03f);
+                    // The forearm runs on from the wrist, away from the fingers.
+                    if (hand.GetJoint(XRHandJointID.Wrist).TryGetPose(out var wrist) &&
+                        hand.GetJoint(XRHandJointID.MiddleProximal).TryGetPose(out var knuckle))
+                    {
+                        var w = World(wrist.position);
+                        var elbow = w + (w - World(knuckle.position)).normalized * 0.28f;
+                        AddLimb(w, elbow, 0.05f);
+                    }
+
+                    Close();
+                }
+            }
+
+            // Controllers (when hands aren't tracked): the controller, and an arm toward an estimated shoulder.
+            var head = main.transform;
+            var positions = new[] { m_RightPosition, m_LeftPosition };
+            var trackedFlags = new[] { m_RightTracked, m_LeftTracked };
+            for (var c = 0; c < 2; c++)
+            {
+                if (handTracked[c] || trackedFlags[c].ReadValue<float>() < 0.5f)
+                    continue;
+                var controller = World(positions[c].ReadValue<Vector3>());
+                var side = c == 0 ? 1f : -1f;
+                var shoulder = head.position - head.up * 0.25f + head.right * (0.18f * side);
+                Add(controller, 0.09f);
+                AddLimb(controller, controller + (shoulder - controller).normalized * 0.3f, 0.06f);
+                Close();
+            }
+
+            return regions;
         }
 
         // Matches the new boxes to the people already tracked, then places each one in the room with depth.

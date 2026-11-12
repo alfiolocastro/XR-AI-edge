@@ -874,6 +874,17 @@ namespace AIEdge.Diagnostics
                     throw new Exception("The target has no distance, so no threat level.");
                 var hud = PersonMath.ThreatHud(target.SmoothedScore, target.Distance, target.ApproachSpeed, SpeechLanguage.English)
                     .Replace("\n", " / ");
+
+                // Own body: projecting into the camera image must invert the camera's rays (the hand regions rely on
+                // it), and whatever hands or controllers are tracked now are reported.
+                var cameraPose = camera.GetWorldCameraPose();
+                var probe = new Vector2(0.3f, 0.7f);
+                var back = camera.CameraAccess.WorldToViewportPoint(camera.CameraAccess.ViewportPointToRay(probe, cameraPose).GetPoint(1.5f), cameraPose);
+                if (Vector2.Distance(probe, back) > 0.01f)
+                    throw new Exception($"Projection doesn't round-trip: {probe} came back as {back}.");
+                var ownBody = detector.OwnBodyRegions(cameraPose);
+                hud += $"; own body now: {ownBody.Count} region(s) {string.Join(" ", ownBody.Select(r => $"[{r.xMin:0.00}-{r.xMax:0.00}, {r.yMin:0.00}-{r.yMax:0.00}]"))}, " +
+                    $"{detector.IgnoredOwnBody} box(es) ignored";
                 return $"photo: {fromFile.Count} people (file), {fromTexture.Count} (GPU), largest at " +
                     $"{fileBox.Viewport.center} score {fileBox.Score:0.00}, overlap {overlap:0.00}; live {rate:0.0} fps, " +
                     $"infer {detector.LastInferMs} ms, latency {detector.LastLatency * 1000f:0} ms, " +
