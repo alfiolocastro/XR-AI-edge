@@ -5,6 +5,9 @@
     <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
     <!-- On-device speech to text (RecognizerBridge). The audio never leaves the headset. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Boundaryless: the whole app is mixed reality on passthrough, with no immersive scenes, so the system boundary is
+         off for the entire experience (standalone APK only; it has no effect over Link). -->
+    <uses-feature android:name="com.oculus.feature.BOUNDARYLESS_APP" android:required="true" />
     <!-- Android 11+ package visibility: lets TextToSpeech find the system speech engine (Meta's on-device synthesis on Quest). -->
     <queries>
         <intent>

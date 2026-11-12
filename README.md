@@ -75,7 +75,9 @@ What's That? panel. It offers a few presets (Strict diet, Kid-friendly, Plant lo
 
 ## Requirements
 
-- **Headset:** Meta Quest 3 or 3S. Passthrough Camera Access and depth need the Quest 3 family.
+- **Headset:** Meta Quest 3 or 3S. Passthrough Camera Access and depth need the Quest 3 family. The app is
+  boundaryless (`com.oculus.feature.BOUNDARYLESS_APP`): it is all mixed reality on passthrough, so it needs no
+  boundary set up and the boundary stays off while it runs. This applies to the standalone APK only, not over Link.
 - **Unity:** 6000.6.7f1 with Android Build Support (OpenJDK, SDK and NDK).
 - **Git LFS:** binaries (images, models, audio, video, native libraries) are stored in LFS. Install it before cloning:
 
