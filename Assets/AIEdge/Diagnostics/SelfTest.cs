@@ -56,6 +56,7 @@ namespace AIEdge.Diagnostics
             await Run("speech", TestSpeech);
             await Run("speech_it", TestSpeechItalian);
             await Run("whats_that", TestWhatsThat);
+            await Run("people", TestPeople);
             await Run("instructions", TestInstructions);
             await Run("instructions_it", TestInstructionsItalian);
             await Run("stt", TestSpeechInput);
@@ -785,6 +786,84 @@ namespace AIEdge.Diagnostics
 
             panel.Language = SpeechLanguage.English;
             return report.ToString();
+        }
+
+        // People: the detector finds the two people at the bottom left of a test photo (people_test.jpg, pushed next
+        // to selftest.json), from the file and through the live GPU path (which checks the image isn't upside down),
+        // then runs on the live camera for a few seconds at a few frames a second.
+        async Awaitable<string> TestPeople()
+        {
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            if (app.Chat.IsOpen) app.Chat.Close();
+            if (app.AskImage.IsOpen) app.AskImage.Close();
+            if (app.Garden.IsOpen) app.Garden.Close();
+            var panel = app.WhatsThat;
+            if (!panel.IsOpen)
+                app.OpenWhatsThat();
+            var detector = panel.People;
+            var savedEnabled = PersonDetector.Enabled;
+            PersonDetector.Enabled = true;
+            try
+            {
+                var path = Path.Combine(Application.persistentDataPath, "people_test.jpg");
+                if (!File.Exists(path))
+                    throw new FileNotFoundException("Push people_test.jpg next to selftest.json.");
+
+                static PersonBox Largest(List<PersonBox> boxes, string from)
+                {
+                    if (boxes.Count == 0)
+                        throw new Exception($"No people found in the photo ({from}).");
+                    var largest = boxes.OrderByDescending(b => b.Viewport.width * b.Viewport.height).First();
+                    var c = largest.Viewport.center;
+                    if (c.x > 0.35f || c.y > 0.45f)
+                        throw new Exception($"The largest person ({from}) is at {c}, not at the bottom left: the image is flipped.");
+                    return largest;
+                }
+
+                var fromFile = await detector.DetectFileAsync(path);
+                var fileResult = detector.LastResultJson;
+                var fileBox = Largest(fromFile, "file");
+
+                var texture = new Texture2D(2, 2);
+                texture.LoadImage(File.ReadAllBytes(path));
+                detector.DumpNextFrame = Path.Combine(Application.persistentDataPath, "selftest_people_input.png");
+                var fromTexture = await detector.DetectTextureAsync(texture);
+                var textureBox = Largest(fromTexture, $"GPU path: {detector.LastResultJson}; file: {fileResult}");
+                Destroy(texture);
+                var overlap = PersonMath.Overlap(fileBox.Viewport, textureBox.Viewport);
+                if (overlap < 0.6f)
+                    throw new Exception($"File and GPU boxes differ (overlap {overlap:0.00}).");
+
+                // Live: the camera must be streaming, then frames keep coming.
+                var deadline = Time.realtimeSinceStartup + 30f;
+                var camera = FindAnyObjectByType<PassthroughFrameCapture>();
+                while ((camera == null || !camera.IsReady) && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+                if (camera == null || !camera.IsReady)
+                    throw new TimeoutException("The camera never streamed.");
+                await Awaitable.WaitForSecondsAsync(1f);
+                var frames = detector.FrameCount;
+                const float seconds = 6f;
+                await Awaitable.WaitForSecondsAsync(seconds);
+                var rate = (detector.FrameCount - frames) / seconds;
+                // A live frame as the detector sees it, to check it's upright.
+                detector.DumpNextFrame = Path.Combine(Application.persistentDataPath, "selftest_people_live.png");
+                await Awaitable.WaitForSecondsAsync(1f);
+                if (detector.Error != null)
+                    throw new Exception(detector.Error);
+                if (rate < 2f)
+                    throw new Exception($"Only {rate:0.0} frames a second.");
+
+                var distances = detector.People.Select(p => p.Distance).ToList();
+                return $"photo: {fromFile.Count} people (file), {fromTexture.Count} (GPU), largest at " +
+                    $"{fileBox.Viewport.center} score {fileBox.Score:0.00}, overlap {overlap:0.00}; live {rate:0.0} fps, " +
+                    $"infer {detector.LastInferMs} ms, latency {detector.LastLatency * 1000f:0} ms, " +
+                    $"\"{PersonMath.Summary(distances, SpeechLanguage.English)}\"";
+            }
+            finally
+            {
+                PersonDetector.Enabled = savedEnabled;
+            }
         }
 
         // Speech input: each voice says a known sentence, and Whisper (downloaded if missing) transcribes it in that

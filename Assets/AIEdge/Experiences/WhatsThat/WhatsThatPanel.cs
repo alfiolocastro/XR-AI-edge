@@ -49,7 +49,7 @@ namespace AIEdge.WhatsThat
     public class WhatsThatPanel : MonoBehaviour
     {
         const float k_Width = 640f;
-        const float k_Height = 350f;
+        const float k_Height = 400f;
         const float k_CropPadding = 0.1f;
         const int k_MinCropPixels = 224;
         const float k_RenderInterval = 0.06f;
@@ -92,10 +92,16 @@ namespace AIEdge.WhatsThat
             set => AppLanguage.Set(value);
         }
 
+        /// <summary>The background person detector (frames around people, with their distance).</summary>
+        public PersonDetector People => m_People;
+
         ModelInfo Model => ModelCatalog.Gemma4E2B;
 
         ObjectPointer m_Pointer;
         ObjectSegmenter m_Segmenter;
+        PersonDetector m_People;
+        TextMeshProUGUI m_PeopleSummary;
+        TextMeshProUGUI m_PeopleToggleLabel;
         readonly Dictionary<AnswerCard, ObjectHighlight> m_Highlights = new Dictionary<AnswerCard, ObjectHighlight>();
         RectTransform m_Panel;
         TextMeshProUGUI m_Status;
@@ -120,6 +126,9 @@ namespace AIEdge.WhatsThat
             m_Pointer.transform.SetParent(transform, false);
             m_Pointer.enabled = false;
             m_Segmenter = gameObject.AddComponent<ObjectSegmenter>();
+            m_People = gameObject.AddComponent<PersonDetector>();
+            m_People.enabled = false;
+            m_People.Updated += RefreshPeople;
         }
 
         void OnEnable() => m_Pointer.Selected += OnSelected;
@@ -152,6 +161,7 @@ namespace AIEdge.WhatsThat
             transform.rotation *= Quaternion.Euler(25f, 0f, 0f);
             m_Camera.StartStreaming();
             m_Pointer.enabled = true;
+            m_People.enabled = true;
             Subscribe();
             _ = PrepareAsync();
         }
@@ -166,6 +176,7 @@ namespace AIEdge.WhatsThat
 
             Unsubscribe();
             m_Pointer.enabled = false;
+            m_People.enabled = false;
             m_Camera.StopStreaming();
             m_Panel.gameObject.SetActive(false);
             m_CardRoot.gameObject.SetActive(false);
@@ -491,6 +502,7 @@ namespace AIEdge.WhatsThat
 
         void RefreshControls()
         {
+            RefreshPeople();
             if (m_LanguageLabel != null)
                 m_LanguageLabel.text = $"Answers in {AppLanguage.DisplayName(Language)} · change it in the main menu";
         }
@@ -538,8 +550,43 @@ namespace AIEdge.WhatsThat
             UserInstructions.Changed += RefreshInstructions;
             RefreshInstructions();
 
+            m_PeopleSummary = UiFactory.CreateText(m_Panel, "People", "", 18);
+            m_PeopleSummary.color = UiFactory.MutedTextColor;
+            UiFactory.Place(m_PeopleSummary.rectTransform, 24, 344, k_Width - 236, 44);
+            var people = UiFactory.CreateButton(m_Panel, "People", UiFactory.CardColor, TogglePeople, 18);
+            UiFactory.Place((RectTransform)people.transform, k_Width - 184, 340, 160, 48);
+            m_PeopleToggleLabel = people.GetComponentInChildren<TextMeshProUGUI>();
+
             m_CardRoot = new GameObject("WhatsThatCards").transform;
             RefreshControls();
+        }
+
+        void TogglePeople()
+        {
+            PersonDetector.Enabled = !PersonDetector.Enabled;
+            RefreshPeople();
+        }
+
+        // The people row: how many are in view and how far, or why detection is off.
+        void RefreshPeople()
+        {
+            if (m_PeopleSummary == null)
+                return;
+            var on = PersonDetector.Enabled;
+            m_PeopleToggleLabel.text = on ? "People: on" : "People: off";
+            if (!on)
+                m_PeopleSummary.text = "People detection is off";
+            else if (m_People.Error != null)
+                m_PeopleSummary.text = $"People detection: {m_People.Error}";
+            else if (!PersonDetector.IsSupported)
+                m_PeopleSummary.text = "People detection runs on the headset";
+            else
+            {
+                var distances = new List<float>();
+                foreach (var person in m_People.People)
+                    distances.Add(person.Distance);
+                m_PeopleSummary.text = PersonMath.Summary(distances, Language);
+            }
         }
 
         void RefreshInstructions()
