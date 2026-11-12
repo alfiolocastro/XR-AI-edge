@@ -10,12 +10,14 @@ namespace AIEdge.UI
 {
     /// <summary>
     /// Home panel: the experiences (AI Chat, Point &amp; Ask, Tabletop Garden, What's That?), the model manager
-    /// (download with resume, cancel, delete, load/unload, memory) and the neural voice for spoken replies. Built in code with <see cref="UiFactory"/>.
+    /// (download with resume, cancel, delete, load/unload, memory), the neural voices for spoken replies, speech input,
+    /// and the app language (<see cref="AppLanguage"/>) used by replies, voices and speech input. Built in code with
+    /// <see cref="UiFactory"/>.
     /// </summary>
     public class LauncherPanel : MonoBehaviour
     {
         const float k_Width = 900f;
-        const float k_Height = 1046f;
+        const float k_Height = 1156f;
         const float k_VoiceRowHeight = 100f;
         const int k_ExperienceCount = 4;
         const float k_RefreshInterval = 0.25f;
@@ -66,6 +68,10 @@ namespace AIEdge.UI
         readonly List<ModelRow> m_Rows = new List<ModelRow>();
         readonly List<VoiceRow> m_VoiceRows = new List<VoiceRow>();
         readonly List<ExperienceTile> m_Tiles = new List<ExperienceTile>();
+        readonly Dictionary<string, Button> m_LanguageButtons = new Dictionary<string, Button>();
+        VoiceRow m_SpeechInputRow;
+        string m_Heard;
+        bool m_Trying;
         RectTransform m_Panel;
         TextMeshProUGUI m_Footer;
         float m_NextRefresh;
@@ -121,10 +127,23 @@ namespace AIEdge.UI
             m_Panel = UiFactory.CreatePanel(transform, "LauncherPanel", new Vector2(k_Width, k_Height));
 
             var title = UiFactory.CreateText(m_Panel, "Title", "XR AI Edge", 44);
-            UiFactory.Place(title.rectTransform, 32, 22, 600, 56);
+            UiFactory.Place(title.rectTransform, 32, 22, 420, 56);
             var subtitle = UiFactory.CreateText(m_Panel, "Subtitle", "Google AI Edge Gallery experiences, running on this headset", 22);
             subtitle.color = UiFactory.MutedTextColor;
-            UiFactory.Place(subtitle.rectTransform, 32, 78, 836, 32);
+            UiFactory.Place(subtitle.rectTransform, 32, 78, 560, 32);
+
+            // The language of replies, voices and speech input, for every experience.
+            for (var i = 0; i < AppLanguage.All.Length; i++)
+            {
+                var language = AppLanguage.All[i];
+                var button = UiFactory.CreateButton(m_Panel, AppLanguage.DisplayName(language), UiFactory.CardColor, () => AppLanguage.Set(language), 22);
+                UiFactory.Place((RectTransform)button.transform, 616 + i * 130, 24, 122, 52);
+                m_LanguageButtons[language] = button;
+            }
+
+            var languageHint = UiFactory.CreateText(m_Panel, "LanguageHint", "Replies · voice · speech input", 16, TextAlignmentOptions.Center);
+            languageHint.color = UiFactory.MutedTextColor;
+            UiFactory.Place(languageHint.rectTransform, 616, 80, 252, 26);
 
             var experiences = UiFactory.CreateText(m_Panel, "ExperiencesHeader", "Experiences", 26);
             UiFactory.Place(experiences.rectTransform, 32, 124, 400, 34);
@@ -151,6 +170,10 @@ namespace AIEdge.UI
                 m_VoiceRows.Add(BuildVoiceRow(voice, y));
                 y += k_VoiceRowHeight + 10f;
             }
+
+            m_SpeechInputRow = BuildVoiceRow(SpeechInput.Model, y);
+            m_VoiceRows.Add(m_SpeechInputRow);
+            y += k_VoiceRowHeight + 10f;
 
             m_Footer = UiFactory.CreateText(m_Panel, "Footer", "", 20);
             m_Footer.color = UiFactory.MutedTextColor;
@@ -215,6 +238,12 @@ namespace AIEdge.UI
 
         void OnVoicePrimary(VoiceRow row)
         {
+            if (row == m_SpeechInputRow)
+            {
+                OnSpeechInputPrimary(row);
+                return;
+            }
+
             var speech = SpeechEngine.Instance;
             if (speech == null)
                 return;
@@ -259,6 +288,26 @@ namespace AIEdge.UI
 
         void OnVoiceDelete(VoiceRow row)
         {
+            if (row == m_SpeechInputRow)
+            {
+                var input = SpeechInput.Instance;
+                input?.Shutdown();
+                try
+                {
+                    VoiceStore.Delete(row.Voice);
+                    row.Error = null;
+                }
+                catch (IOException e)
+                {
+                    row.Error = e.Message;
+                }
+
+                m_Heard = null;
+                input?.Reload();
+                Refresh();
+                return;
+            }
+
             var speech = SpeechEngine.Instance;
             // Release the voice files before deleting them, then reload the voices that are left.
             speech?.ShutdownEngine();
@@ -276,8 +325,126 @@ namespace AIEdge.UI
             Refresh();
         }
 
+        // Speech input: download Whisper, then "Try it" records a few words and shows what was heard.
+        async void OnSpeechInputPrimary(VoiceRow row)
+        {
+            var input = SpeechInput.Instance;
+            if (input == null)
+                return;
+
+            if (input.Downloader.IsDownloading(row.Voice))
+            {
+                row.Download?.Cancel();
+            }
+            else if (VoiceStore.GetState(row.Voice) != ModelState.Downloaded)
+            {
+                row.Error = null;
+                row.Download = new CancellationTokenSource();
+                var progress = new Progress<DownloadProgress>(p => row.LastProgress = p);
+                try
+                {
+                    await input.Downloader.DownloadAsync(row.Voice, progress, row.Download.Token);
+                    input.Reload();
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception e) when (e is IOException || e is InvalidOperationException)
+                {
+                    row.Error = e.Message;
+                    Debug.LogWarning($"[AIEdge] {e.Message}");
+                }
+                finally
+                {
+                    row.Download.Dispose();
+                    row.Download = null;
+                }
+            }
+            else if (input.IsRecording && m_Trying)
+            {
+                m_Trying = false;
+                m_Heard = "…";
+                Refresh();
+                var result = await input.StopAndTranscribeAsync();
+                m_Heard = result.Error ?? (string.IsNullOrWhiteSpace(result.Text) ? "(nothing)" : $"\"{result.Text}\"");
+            }
+            else if (input.IsReady)
+            {
+                m_Heard = null;
+                m_Trying = await input.StartListeningAsync();
+                if (!m_Trying)
+                    m_Heard = input.Info;
+            }
+
+            Refresh();
+        }
+
+        void RefreshSpeechInput(VoiceRow row)
+        {
+            var input = SpeechInput.Instance;
+            var voice = row.Voice;
+            var downloading = input != null && input.Downloader.IsDownloading(voice);
+            var state = VoiceStore.GetState(voice);
+            var details = $"{ModelDownloader.FormatBytes(voice.sizeBytes)} · offline · {voice.license}";
+
+            string status;
+            float fraction;
+            var primary = "Download";
+            if (downloading)
+            {
+                var p = row.LastProgress;
+                fraction = p.Fraction;
+                var total = p.TotalBytes > 0 ? p.TotalBytes : voice.sizeBytes;
+                status = $"Downloading {fraction * 100f:0}% · {ModelDownloader.FormatBytes(p.Bytes)} of {ModelDownloader.FormatBytes(total)} · {ModelDownloader.FormatBytes((long)p.BytesPerSecond)}/s";
+                primary = "Cancel";
+            }
+            else if (state == ModelState.Downloaded)
+            {
+                fraction = 1f;
+                var inputState = input != null ? input.State : SpeechInput.Status.Unavailable;
+                status = inputState switch
+                {
+                    SpeechInput.Status.Recording => $"<color=#FF9090>Listening {input.RecordedSeconds:0}s: say something in {AppLanguage.DisplayName(AppLanguage.Current)}</color>",
+                    SpeechInput.Status.Transcribing => "Transcribing…",
+                    SpeechInput.Status.Ready => $"{details} · <color=#7FE0A0>In use</color>",
+                    SpeechInput.Status.Failed => $"<color=#FF8080>{input.Info}</color>",
+                    SpeechInput.Status.Unavailable => $"{details} · Android only",
+                    _ => $"{details} · Loading…",
+                };
+                if (m_Heard != null && inputState != SpeechInput.Status.Recording)
+                    status = $"Heard: {MarkdownToTmp.Escape(m_Heard)}";
+                primary = inputState == SpeechInput.Status.Recording && m_Trying ? "Stop" : "Try it";
+            }
+            else if (state == ModelState.Partial)
+            {
+                fraction = Mathf.Clamp01((float)((double)VoiceStore.GetBytes(voice) / voice.sizeBytes));
+                status = $"Paused at {fraction * 100f:0}%";
+                primary = "Resume";
+            }
+            else
+            {
+                fraction = 0f;
+                status = $"{details} · not downloaded · talk instead of typing";
+            }
+
+            if (row.Error != null)
+                status = $"<color=#FF8080>{row.Error}</color>";
+
+            row.Status.text = status;
+            UiFactory.SetProgress(row.Progress, fraction);
+            UiFactory.SetLabel(row.Primary, primary);
+            row.Primary.interactable = input != null && (state != ModelState.Downloaded || input.IsReady || input.IsRecording && m_Trying);
+            row.Delete.interactable = !downloading && state != ModelState.NotDownloaded && (input == null || !input.IsRecording);
+        }
+
         void RefreshVoice(VoiceRow row)
         {
+            if (row == m_SpeechInputRow)
+            {
+                RefreshSpeechInput(row);
+                return;
+            }
+
             var voice = row.Voice;
             var speech = SpeechEngine.Instance;
             var downloading = speech != null && speech.Downloader.IsDownloading(voice);
@@ -409,6 +576,8 @@ namespace AIEdge.UI
                 RefreshRow(row);
             foreach (var row in m_VoiceRows)
                 RefreshVoice(row);
+            foreach (var (language, button) in m_LanguageButtons)
+                button.image.color = language == AppLanguage.Current ? UiFactory.AccentColor : UiFactory.CardColor;
 
             var loaded = m_Service.LoadedModel;
             var memory = loaded != null && m_Service.LoadInfo != null ? $"{loaded.displayName} loaded ({m_Service.LoadInfo.backend}, {m_Service.LoadInfo.pssMb} MB)" : "No model loaded";

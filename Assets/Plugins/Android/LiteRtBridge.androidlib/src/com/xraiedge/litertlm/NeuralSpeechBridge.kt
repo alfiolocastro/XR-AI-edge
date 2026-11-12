@@ -38,6 +38,7 @@ class NeuralSpeechBridge(
   // Bumped by stop() so work queued or in flight before it is dropped.
   private val generation = AtomicInteger()
   private val pending = AtomicInteger()
+  private val engineLock = Object()
 
   @Volatile private var tts: OfflineTts? = null
   @Volatile private var track: AudioTrack? = null
@@ -93,6 +94,18 @@ class NeuralSpeechBridge(
   /** True while audio is being synthesized, queued or played. */
   fun isSpeaking(): Boolean = pending.get() > 0
 
+  /**
+   * Synthesizes [text] and returns the samples (mono, -1 to 1, at [getSampleRate]) without playing them, for
+   * tests. Empty when the voice isn't loaded.
+   */
+  fun synthesize(text: String): FloatArray {
+    val engine = tts ?: return FloatArray(0)
+    return synchronized(engineLock) { engine.generate(text, 0, 1f).samples }
+  }
+
+  /** Sample rate of the voice, or 0 before it is loaded. */
+  fun getSampleRate(): Int = tts?.sampleRate() ?: 0
+
   /** Stops speaking and releases the voice and audio output. */
   fun shutdown() {
     ready = false
@@ -115,7 +128,7 @@ class NeuralSpeechBridge(
       while (running) {
         val utterance = textQueue.take()
         if (utterance.generation != generation.get()) continue
-        val audio = engine.generate(utterance.text, 0, rate)
+        val audio = synchronized(engineLock) { engine.generate(utterance.text, 0, rate) }
         if (utterance.generation != generation.get()) continue
         audioQueue.put(Clip(audio.samples, utterance.id, utterance.generation))
       }

@@ -31,10 +31,6 @@ namespace AIEdge.WhatsThat
         /// <paramref name="personalInstructions"/>, it leaves room for one more sentence following the user's
         /// instructions (they are in the system prompt, see <see cref="UserInstructions"/>).
         /// </summary>
-        /// <summary>System prompt for Italian answers, so English personal instructions don't pull the reply into English.</summary>
-        public const string ItalianSystemPrompt =
-            "Rispondi sempre e solo in italiano, in ogni frase, anche quando le istruzioni sono scritte in un'altra lingua.";
-
         public static string Prompt(string facts, string language, bool personalInstructions = false)
         {
             var italian = language == SpeechLanguage.Italian;

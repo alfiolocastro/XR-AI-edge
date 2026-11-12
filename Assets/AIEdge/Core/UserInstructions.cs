@@ -90,24 +90,6 @@ namespace AIEdge
         /// </summary>
         public static string Compose(string basePrompt) => Compose(basePrompt, IsActive ? Text : null);
 
-        /// <summary>
-        /// The language a reply to <paramref name="message"/> must keep, when the instructions are on: personal
-        /// instructions are usually written in English and otherwise pull an Italian conversation into English
-        /// ("Pirate" answers an Italian question in English). Null when the instructions are off or the message gives
-        /// no clear signal.
-        /// </summary>
-        public static string ReplyLanguage(string message) => IsActive ? SpeechLanguage.Detect(message) : null;
-
-        /// <summary>
-        /// <paramref name="message"/> as sent to the model: with the instructions on and an Italian message, a short
-        /// reminder to answer in Italian is appended. The conversation shown and saved keeps the original text.
-        /// </summary>
-        public static string ForModel(string message) => ForModel(message, ReplyLanguage(message));
-
-        /// <summary><see cref="ForModel(string)"/> with an explicit reply language.</summary>
-        public static string ForModel(string message, string replyLanguage) =>
-            replyLanguage == SpeechLanguage.Italian ? message + "\n\n(Rispondi solo in italiano.)" : message;
-
         /// <summary><see cref="Compose(string)"/> with explicit instructions (null or empty for none).</summary>
         public static string Compose(string basePrompt, string instructions)
         {
@@ -117,8 +99,7 @@ namespace AIEdge
 
             var block = "The user gave you these personal instructions. Follow them in every reply whenever they apply " +
                         "to what the user asks about, shows or points at, while keeping your answer accurate. Write the " +
-                        "whole reply in one language: the one you are asked to reply in, otherwise the user's own " +
-                        "language, even when these instructions are written in another:\n" +
+                        "whole reply in the reply language, even when these instructions are written in another:\n" +
                         instructions.Trim();
             return basePrompt.Length == 0 ? block : $"{basePrompt}\n\n{block}";
         }

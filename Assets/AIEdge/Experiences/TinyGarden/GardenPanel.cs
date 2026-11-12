@@ -449,7 +449,9 @@ namespace AIEdge.TinyGarden
             UiFactory.Place((RectTransform)clear.transform, k_Width - 112, 392, 90, 34);
 
             m_Input = CreateInputField(m_Panel);
-            UiFactory.Place((RectTransform)m_Input.transform, 22, 434, k_Width - 164, 60);
+            UiFactory.Place((RectTransform)m_Input.transform, 22, 434, k_Width - 280, 60);
+            var talk = MicButton.Create(m_Panel, Submit, SetStatus, 20);
+            UiFactory.Place((RectTransform)talk.transform, k_Width - 250, 434, 106, 60);
             m_Input.onSubmit.AddListener(_ => Submit(m_Input.text));
             m_SendButton = UiFactory.CreateButton(m_Panel, "Send", UiFactory.AccentColor, () => Submit(m_Input.text), 22);
             UiFactory.Place((RectTransform)m_SendButton.transform, k_Width - 134, 434, 112, 60);

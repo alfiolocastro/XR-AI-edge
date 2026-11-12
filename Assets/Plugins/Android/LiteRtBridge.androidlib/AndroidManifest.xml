@@ -3,6 +3,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Passthrough Camera Access (Quest 3 / 3S). -->
     <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
+    <!-- On-device speech to text (RecognizerBridge). The audio never leaves the headset. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Android 11+ package visibility: lets TextToSpeech find the system speech engine (Meta's on-device synthesis on Quest). -->
     <queries>
         <intent>

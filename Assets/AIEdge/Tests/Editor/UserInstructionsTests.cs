@@ -86,30 +86,12 @@ namespace AIEdge.Tests
         }
 
         [Test]
-        public void ItalianMessage_GetsReplyLanguageOnlyWithInstructionsOn()
-        {
-            const string question = "Dimmi due cose sulla luna, per favore.";
-            Assert.IsNull(UserInstructions.ReplyLanguage(question));
-            Assert.AreEqual(question, UserInstructions.ForModel(question));
-
-            UserInstructions.Set("Talk like a pirate.", true);
-            Assert.AreEqual(SpeechLanguage.Italian, UserInstructions.ReplyLanguage(question));
-            StringAssert.StartsWith(question, UserInstructions.ForModel(question));
-            StringAssert.EndsWith("(Rispondi solo in italiano.)", UserInstructions.ForModel(question));
-
-            const string english = "Tell me two things about the moon, please.";
-            Assert.AreEqual(english, UserInstructions.ForModel(english));
-        }
-
-        [Test]
         public void Italian_KeepsReplyInOneLanguage()
         {
             var prompt = PointerMath.Prompt("", SpeechLanguage.Italian, true);
             StringAssert.Contains("written in Italian", prompt);
             StringAssert.EndsWith("Reply in Italian.", prompt);
-            StringAssert.Contains("one language", UserInstructions.Compose("", "I'm on a diet."));
-            StringAssert.StartsWith(PointerMath.ItalianSystemPrompt,
-                UserInstructions.Compose(PointerMath.ItalianSystemPrompt, "I'm on a diet."));
+            StringAssert.Contains("reply language", UserInstructions.Compose("", "I'm on a diet."));
         }
     }
 }

@@ -110,6 +110,7 @@ namespace AIEdge.Chat
             if (m_Service == null)
                 m_Service = LlmService.Instance;
             UserInstructions.Changed += OnInstructionsChanged;
+            AppLanguage.Changed += OnInstructionsChanged;
         }
 
         // New instructions reach the system prompt: rebuild the conversation (from history) before the next message.
@@ -125,6 +126,7 @@ namespace AIEdge.Chat
         void OnDestroy()
         {
             UserInstructions.Changed -= OnInstructionsChanged;
+            AppLanguage.Changed -= OnInstructionsChanged;
             Unsubscribe();
             if (m_CardRoot != null)
                 Destroy(m_CardRoot.gameObject);
@@ -236,9 +238,8 @@ namespace AIEdge.Chat
             m_ScrollToBottom = true;
             RefreshControls();
 
-            var language = UserInstructions.ReplyLanguage(text);
-            SpeechEngine.Instance?.BeginReply(language);
-            m_Service.Engine.Send(UserInstructions.ForModel(text, language));
+            SpeechEngine.Instance?.BeginReply(AppLanguage.Current);
+            m_Service.Engine.Send(AppLanguage.ForModel(text));
         }
 
         /// <summary>Stops the answer in progress.</summary>
@@ -307,7 +308,7 @@ namespace AIEdge.Chat
                 }
 
                 var history = ChatContext.SelectHistory(m_Thread.messages, ChatContext.HistoryBudgetChars(Model.maxTokens));
-                m_Service.NewConversation(UserInstructions.Compose(m_Thread.systemPrompt), history: history);
+                m_Service.NewConversation(AppLanguage.SystemPrompt(m_Thread.systemPrompt), history: history);
                 m_ConversationReady = true;
                 var info = m_Service.LoadInfo;
                 SetStatus($"{Model.displayName} · {info?.backend ?? "?"}" +
@@ -393,7 +394,7 @@ namespace AIEdge.Chat
             if (ChatContext.ShouldTrim(stats.kvTokens, Model.maxTokens))
             {
                 var history = ChatContext.SelectHistory(m_Thread.messages, ChatContext.HistoryBudgetChars(Model.maxTokens));
-                m_Service.NewConversation(UserInstructions.Compose(m_Thread.systemPrompt), history: history);
+                m_Service.NewConversation(AppLanguage.SystemPrompt(m_Thread.systemPrompt), history: history);
                 SetStatus($"{Model.displayName} · context trimmed to the last {history.Count} messages");
             }
         }
@@ -636,8 +637,10 @@ namespace AIEdge.Chat
 
         void BuildInput()
         {
-            m_Input = CreateInputField(m_Panel, "Input", "Type or dictate a message…", TMP_InputField.LineType.MultiLineSubmit);
-            UiFactory.Place((RectTransform)m_Input.transform, 20, 632, 740, 92);
+            m_Input = CreateInputField(m_Panel, "Input", "Type a message, or press Talk…", TMP_InputField.LineType.MultiLineSubmit);
+            UiFactory.Place((RectTransform)m_Input.transform, 20, 632, 622, 92);
+            var talk = MicButton.Create(m_Panel, Submit, SetStatus, 22);
+            UiFactory.Place((RectTransform)talk.transform, 652, 632, 110, 92);
             m_Input.onSubmit.AddListener(_ => Submit(m_Input.text));
 
             m_SendButton = UiFactory.CreateButton(m_Panel, "Send", UiFactory.AccentColor, () =>

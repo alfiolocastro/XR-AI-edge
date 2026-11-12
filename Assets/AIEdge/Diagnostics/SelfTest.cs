@@ -58,6 +58,7 @@ namespace AIEdge.Diagnostics
             await Run("whats_that", TestWhatsThat);
             await Run("instructions", TestInstructions);
             await Run("instructions_it", TestInstructionsItalian);
+            await Run("stt", TestSpeechInput);
             await Run("depth_place", TestDepthPlace);
             await Run("depth_garden", TestDepthGarden);
 
@@ -69,6 +70,12 @@ namespace AIEdge.Diagnostics
             if (m_Config.Contains("\"tests\"") && !m_Config.Contains($"\"{name}\""))
                 return;
 
+            var savedLanguage = AppLanguage.Current;
+            var savedText = UserInstructions.Text;
+            var savedEnabled = UserInstructions.Enabled;
+            AppLanguage.Set(SpeechLanguage.English);
+            if (savedEnabled)
+                UserInstructions.Set(savedText, false);
             try
             {
                 var detail = await test();
@@ -77,6 +84,11 @@ namespace AIEdge.Diagnostics
             catch (Exception e)
             {
                 Report(name, false, e.GetType().Name + ": " + e.Message);
+            }
+            finally
+            {
+                AppLanguage.Set(savedLanguage);
+                UserInstructions.Set(savedText, savedEnabled);
             }
         }
 
@@ -650,19 +662,41 @@ namespace AIEdge.Diagnostics
             if (!speech.IsVoiceReady(voice))
                 throw new TimeoutException("Italian voice never became ready: " + speech.Info);
 
-            // An Italian chat reply should be read by the Italian voice.
+            // With Italiano selected in the launcher and an English personal instruction on, the whole chat reply is
+            // in Italian and read by the Italian voice.
+            AppLanguage.Set(SpeechLanguage.Italian);
+            UserInstructions.Set("Talk like a pirate.", true);
             var app = FindAnyObjectByType<AIEdgeApp>();
             if (!app.Chat.IsOpen)
                 app.OpenChat();
             app.Chat.NewChat();
             var before = speech.UtteranceCount;
-            var reply = await ChatTurnAsync(app.Chat, "Rispondi in italiano: dimmi due curiosità sulla Luna, in due frasi brevi.");
+            var voices = new HashSet<string>();
+            void OnUtterance() => voices.Add(speech.LastLanguage);
+            speech.UtteranceStarted += OnUtterance;
+            ChatMessage reply;
+            try
+            {
+                reply = await ChatTurnAsync(app.Chat, "Dimmi due curiosità sulla Luna, in due frasi brevi.");
+                var spokenDeadline = Time.realtimeSinceStartup + 20f;
+                while (speech.IsSpeaking && Time.realtimeSinceStartup < spokenDeadline)
+                    await Awaitable.NextFrameAsync();
+            }
+            finally
+            {
+                speech.UtteranceStarted -= OnUtterance;
+            }
+
             var utterances = speech.UtteranceCount - before;
             if (utterances == 0)
                 throw new Exception("Reply was not spoken.");
-            if (speech.LastLanguage != SpeechLanguage.Italian)
-                throw new Exception($"Reply spoken in '{speech.LastLanguage}', expected Italian. Reply: {reply.text}");
+            if (speech.LastLanguage != SpeechLanguage.Italian || voices.Contains(SpeechLanguage.English))
+                throw new Exception($"Reply spoken in '{string.Join(",", voices)}', expected Italian only. Reply: {reply.text}");
+            var englishSentences = Regex.Split(reply.text, @"(?<=[.!?])\s+").Where(x => SpeechLanguage.Detect(x) == SpeechLanguage.English).ToList();
+            if (englishSentences.Count > 0)
+                throw new Exception($"English sentence(s) in an Italian reply: \"{string.Join("\" \"", englishSentences)}\". Reply: {reply.text}");
             var latency = speech.LastReplyAudioLatency;
+            app.Chat.Close();
 
             // An English sentence right after should switch back to the English voice.
             speech.Speak("And this sentence is in English again.", interrupt: true);
@@ -670,8 +704,8 @@ namespace AIEdge.Diagnostics
             var fps = 1f / Mathf.Max(0.001f, Time.smoothDeltaTime);
             if (english != SpeechLanguage.English)
                 throw new Exception($"English sentence spoken in '{english}'.");
-            return $"{download}{speech.Info}; Italian reply spoken as {utterances} utterances by the Italian voice, " +
-                $"audio after {latency:0.00}s; English sentence switched back to English; {fps:0} fps";
+            return $"{download}{speech.Info}; Italian reply (pirate instruction on) spoken as {utterances} utterances by the Italian voice, " +
+                $"audio after {latency:0.00}s: {reply.text.Replace("\n", " ")}; English sentence switched back to English; {fps:0} fps";
         }
 
         // What's That?: point straight ahead (the gaze ray stands in for a hand), and Gemma names what depth found
@@ -750,6 +784,84 @@ namespace AIEdge.Diagnostics
 
             panel.Language = SpeechLanguage.English;
             return report.ToString();
+        }
+
+        // Speech input: each voice says a known sentence, and Whisper (downloaded if missing) transcribes it in that
+        // language; most words must come back. Then a short real recording checks the microphone path.
+        async Awaitable<string> TestSpeechInput()
+        {
+            var input = SpeechInput.Instance;
+            var speech = SpeechEngine.Instance;
+            if (input == null || speech == null)
+                throw new Exception("No SpeechInput or SpeechEngine in the scene.");
+
+            var report = new StringBuilder();
+            if (VoiceStore.GetState(SpeechInput.Model) != ModelState.Downloaded)
+            {
+                var downloadStart = Time.realtimeSinceStartup;
+                await input.Downloader.DownloadAsync(SpeechInput.Model);
+                report.Append($"Whisper downloaded in {Time.realtimeSinceStartup - downloadStart:0}s; ");
+                input.Reload();
+            }
+
+            var deadline = Time.realtimeSinceStartup + 60f;
+            while (!input.IsReady && input.State != SpeechInput.Status.Failed && Time.realtimeSinceStartup < deadline)
+                await Awaitable.NextFrameAsync();
+            if (!input.IsReady)
+                throw new TimeoutException($"Speech input never became ready ({input.State}): {input.Info}");
+            report.Append($"{input.Info}; ");
+
+            var sentences = new[]
+            {
+                (SpeechLanguage.English, "The cat is sleeping on the kitchen sofa next to the window."),
+                (SpeechLanguage.Italian, "Il gatto dorme sul divano della cucina vicino alla finestra."),
+            };
+            var failures = new List<string>();
+            foreach (var (language, sentence) in sentences)
+            {
+                deadline = Time.realtimeSinceStartup + 30f;
+                var voice = VoiceCatalog.ForLanguage(language);
+                while (!speech.IsVoiceReady(voice) && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+                var samples = speech.Synthesize(sentence, language, out var sampleRate);
+                if (samples == null || samples.Length == 0)
+                    throw new Exception($"The {language} voice isn't loaded, so there is nothing to transcribe.");
+
+                var started = Time.realtimeSinceStartup;
+                var result = await input.TranscribeAsync(samples, sampleRate, language);
+                var seconds = Time.realtimeSinceStartup - started;
+                if (result.Error != null)
+                    throw new Exception(result.Error);
+                var expected = Words(sentence);
+                var heard = Words(result.Text);
+                var matched = expected.Count(heard.Contains) / (float)expected.Count;
+                report.Append($"[{language}] heard \"{result.Text}\" ({matched:P0} of words, {seconds:0.00}s, {result.Info}); ");
+                if (matched < 0.7f)
+                    failures.Add($"{language}: only {matched:P0} of the words");
+            }
+
+            // The microphone path: 1.5 s of whatever the room sounds like. Silence comes back empty, not invented.
+            if (await input.StartListeningAsync())
+            {
+                await Awaitable.WaitForSecondsAsync(1.5f);
+                var level = input.Level;
+                var recorded = input.RecordedSeconds;
+                var result = await input.StopAndTranscribeAsync(SpeechLanguage.English);
+                report.Append($"microphone: {recorded:0.0}s recorded, level {level:0.00}, heard \"{result.Text}\" {result.Info}");
+                if (recorded < 1f)
+                    failures.Add($"microphone recorded only {recorded:0.0}s");
+            }
+            else
+            {
+                failures.Add("microphone: " + input.Info);
+            }
+
+            if (failures.Count > 0)
+                throw new Exception(string.Join("; ", failures) + ". " + report);
+            return report.ToString();
+
+            static HashSet<string> Words(string text) => new HashSet<string>(
+                Regex.Matches(text.ToLowerInvariant(), @"[\p{L}']+").Cast<Match>().Select(m => m.Value));
         }
 
         // Personal instructions written in English, with What's That? set to Italiano: every sentence of the reply is in

@@ -241,11 +241,10 @@ namespace AIEdge.AskImage
             SetStatus($"Asking about a {crop.width}×{crop.height} crop…");
 
             // Each question is its own single-turn conversation, as in the Gallery's Ask Image.
-            m_Service.NewConversation(UserInstructions.Compose(""));
+            m_Service.NewConversation(AppLanguage.SystemPrompt(""));
             var prompt = facts.Length > 0 ? $"{facts} Use these measurements if the question is about size or distance.\n\n{question}" : question;
-            var language = UserInstructions.ReplyLanguage(question);
-            SpeechEngine.Instance?.BeginReply(language);
-            m_Service.Engine.Send(UserInstructions.ForModel(prompt, language), path);
+            SpeechEngine.Instance?.BeginReply(AppLanguage.Current);
+            m_Service.Engine.Send(AppLanguage.ForModel(prompt), path);
         }
 
         void Update()
@@ -412,7 +411,9 @@ namespace AIEdge.AskImage
             UiFactory.Place(label.rectTransform, 24, 176, 300, 26);
             m_Question = CreateInputField(m_Panel);
             m_Question.text = k_Questions[0];
-            UiFactory.Place((RectTransform)m_Question.transform, 24, 204, k_Width - 48, 64);
+            UiFactory.Place((RectTransform)m_Question.transform, 24, 204, k_Width - 172, 64);
+            var talk = MicButton.Create(m_Panel, text => m_Question.text = text, SetStatus, 20);
+            UiFactory.Place((RectTransform)talk.transform, k_Width - 136, 204, 112, 64);
 
             for (var i = 0; i < k_Questions.Length; i++)
             {

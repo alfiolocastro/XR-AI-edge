@@ -36,13 +36,22 @@ namespace AIEdge
         /// <summary>License of the voice's training data.</summary>
         public string license;
 
+        /// <summary>
+        /// The exact files to download, when the repository holds more than the engine needs (as Whisper's, with
+        /// float and int8 models). Empty for Piper voices, whose files <see cref="IsNeeded"/> picks.
+        /// </summary>
+        public string[] files = Array.Empty<string>();
+
         /// <summary>File list at the pinned commit (Hugging Face tree API).</summary>
         public string TreeUrl => $"https://huggingface.co/api/models/{repoId}/tree/{commitHash}?recursive=true";
 
         /// <summary>Download URL of one file at the pinned commit.</summary>
         public string FileUrl(string path) => $"https://huggingface.co/{repoId}/resolve/{commitHash}/{path}";
 
-        /// <summary>True for the repository files the engine needs (skips scripts, README and the Piper JSON).</summary>
+        /// <summary>True for the repository files this pack needs: <see cref="files"/>, or a Piper voice's files.</summary>
+        public bool Needs(string path) => files != null && files.Length > 0 ? Array.IndexOf(files, path) >= 0 : IsNeeded(path);
+
+        /// <summary>True for the files a Piper voice needs (skips scripts, README and the Piper JSON).</summary>
         public static bool IsNeeded(string path) =>
             path.EndsWith(".onnx", StringComparison.Ordinal) || path == "tokens.txt" || path == "MODEL_CARD" ||
             path.StartsWith("espeak-ng-data/", StringComparison.Ordinal);
@@ -79,6 +88,22 @@ namespace AIEdge
             commitHash = "b2d11ae8ce81120ba05f39fb43ecbff2d6d634ea",
             sizeBytes = 81504041,
             license = "CC0",
+        };
+
+        /// <summary>
+        /// OpenAI Whisper "base" (multilingual, int8), packaged for sherpa-onnx: on-device speech to text for every
+        /// language the app speaks. Not a voice: <see cref="All"/> leaves it out, and <see cref="SpeechInput"/> loads it.
+        /// </summary>
+        public static readonly VoiceInfo Whisper = new VoiceInfo
+        {
+            id = "whisper-base-int8",
+            displayName = "Speech input · Whisper base",
+            language = "multi",
+            repoId = "csukuangfj/sherpa-onnx-whisper-base",
+            commitHash = "bb53ee204431c90d314c1cc08d28d23e5b7927cc",
+            sizeBytes = 160609290,
+            license = "MIT",
+            files = new[] { "base-encoder.int8.onnx", "base-decoder.int8.onnx", "base-tokens.txt" },
         };
 
         /// <summary>The English voice, the fallback when a reply's language is unclear.</summary>
@@ -319,9 +344,12 @@ namespace AIEdge
 
             var list = JsonUtility.FromJson<TreeList>("{\"items\":" + request.downloadHandler.text + "}");
             var files = (list?.items ?? Array.Empty<TreeEntry>())
-                .Where(e => e.type == "file" && VoiceInfo.IsNeeded(e.path) && !e.path.Contains(".."))
+                .Where(e => e.type == "file" && voice.Needs(e.path) && !e.path.Contains(".."))
                 .ToList();
-            if (!files.Any(f => f.path.EndsWith(".onnx", StringComparison.Ordinal)) || !files.Any(f => f.path == "tokens.txt"))
+            var complete = voice.files != null && voice.files.Length > 0
+                ? voice.files.All(name => files.Any(f => f.path == name))
+                : files.Any(f => f.path.EndsWith(".onnx", StringComparison.Ordinal)) && files.Any(f => f.path == "tokens.txt");
+            if (!complete)
                 throw new IOException($"{voice.displayName} file list is incomplete.");
             return files;
         }

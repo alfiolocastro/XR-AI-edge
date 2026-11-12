@@ -61,6 +61,8 @@ namespace AIEdge
                 m_WhatsThat = new GameObject("WhatsThat").AddComponent<WhatsThatPanel>();
             if (m_Instructions == null)
                 m_Instructions = new GameObject("Instructions").AddComponent<InstructionsPanel>();
+            if (FindAnyObjectByType<SpeechInput>() == null)
+                gameObject.AddComponent<SpeechInput>();
         }
 
         async void Start()

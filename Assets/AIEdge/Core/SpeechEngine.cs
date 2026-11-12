@@ -241,6 +241,20 @@ namespace AIEdge
             m_Engines.FirstOrDefault(e => e.Ready && e.Voice != null && e.Voice.language == language) ??
             m_Engines.FirstOrDefault(e => e.Ready);
 
+        /// <summary>
+        /// Synthesizes <paramref name="text"/> with the voice of <paramref name="language"/> without playing it (for
+        /// tests). Returns null when that voice isn't loaded.
+        /// </summary>
+        public float[] Synthesize(string text, string language, out int sampleRate)
+        {
+            sampleRate = 0;
+            var engine = m_Engines.FirstOrDefault(e => e.Ready && e.Voice != null && e.Voice.language == language);
+            if (engine == null)
+                return null;
+            sampleRate = engine.Bridge.Call<int>("getSampleRate");
+            return engine.Bridge.Call<float[]>("synthesize", text);
+        }
+
         /// <summary>Stops speaking and drops the reply in progress.</summary>
         public void Stop()
         {

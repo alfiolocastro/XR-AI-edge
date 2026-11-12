@@ -54,7 +54,6 @@ namespace AIEdge.WhatsThat
         const int k_MinCropPixels = 224;
         const float k_RenderInterval = 0.06f;
         const int k_MaxCards = 5;
-        const string k_LanguageKey = "AIEdge.WhatsThat.Language";
 
         [SerializeField, Tooltip("Model service. Uses LlmService.Instance if empty.")]
         LlmService m_Service;
@@ -86,16 +85,11 @@ namespace AIEdge.WhatsThat
         /// <summary>True while the panel is open.</summary>
         public bool IsOpen => m_Panel != null && m_Panel.gameObject.activeSelf;
 
-        /// <summary>Language of the answers: "en" or "it". Remembered between sessions.</summary>
+        /// <summary>Language of the answers: the app language (<see cref="AppLanguage"/>), chosen in the launcher.</summary>
         public string Language
         {
-            get => PlayerPrefs.GetString(k_LanguageKey, SpeechLanguage.English);
-            set
-            {
-                PlayerPrefs.SetString(k_LanguageKey, value);
-                PlayerPrefs.Save();
-                RefreshControls();
-            }
+            get => AppLanguage.Current;
+            set => AppLanguage.Set(value);
         }
 
         ModelInfo Model => ModelCatalog.Gemma4E2B;
@@ -106,8 +100,7 @@ namespace AIEdge.WhatsThat
         RectTransform m_Panel;
         TextMeshProUGUI m_Status;
         TextMeshProUGUI m_Instructions;
-        Button m_English;
-        Button m_Italian;
+        TextMeshProUGUI m_LanguageLabel;
         Transform m_CardRoot;
         readonly List<AnswerCard> m_Cards = new List<AnswerCard>();
         readonly StringBuilder m_Stream = new StringBuilder();
@@ -136,6 +129,7 @@ namespace AIEdge.WhatsThat
         void OnDestroy()
         {
             UserInstructions.Changed -= RefreshInstructions;
+            AppLanguage.Changed -= RefreshControls;
             Unsubscribe();
             if (m_CardRoot != null)
                 Destroy(m_CardRoot.gameObject);
@@ -297,10 +291,9 @@ namespace AIEdge.WhatsThat
             m_Stream.Clear();
             SetStatus($"Looking at what you pointed at, {DepthRegion.FormatLength(distance)} away…");
 
-            // The user's instructions are usually written in English; an Italian system prompt keeps the whole reply,
-            // and its voice, in Italian when Italiano is selected.
-            var italian = Language == SpeechLanguage.Italian;
-            m_Service.NewConversation(UserInstructions.Compose(italian ? PointerMath.ItalianSystemPrompt : ""));
+            // The reply-language rule keeps the whole reply, and its voice, in the app language even when the user's
+            // instructions are written in another.
+            m_Service.NewConversation(AppLanguage.SystemPrompt("", Language));
             SpeechEngine.Instance?.BeginReply(Language);
             m_Service.Engine.Send(PointerMath.Prompt(facts, Language, UserInstructions.IsActive), path);
         }
@@ -498,11 +491,8 @@ namespace AIEdge.WhatsThat
 
         void RefreshControls()
         {
-            if (m_English == null)
-                return;
-            var italian = Language == SpeechLanguage.Italian;
-            m_English.GetComponent<Image>().color = italian ? UiFactory.CardColor : UiFactory.AccentColor;
-            m_Italian.GetComponent<Image>().color = italian ? UiFactory.AccentColor : UiFactory.CardColor;
+            if (m_LanguageLabel != null)
+                m_LanguageLabel.text = $"Answers in {AppLanguage.DisplayName(Language)} · change it in the main menu";
         }
 
         void SetStatus(string text)
@@ -533,13 +523,10 @@ namespace AIEdge.WhatsThat
             m_Status.color = UiFactory.MutedTextColor;
             UiFactory.Place(m_Status.rectTransform, 24, 156, k_Width - 48, 56);
 
-            var language = UiFactory.CreateText(m_Panel, "LanguageLabel", "Answer in", 18);
-            language.color = UiFactory.MutedTextColor;
-            UiFactory.Place(language.rectTransform, 24, 236, 120, 50);
-            m_English = UiFactory.CreateButton(m_Panel, "English", UiFactory.CardColor, () => Language = SpeechLanguage.English, 20);
-            UiFactory.Place((RectTransform)m_English.transform, 128, 226, 140, 50);
-            m_Italian = UiFactory.CreateButton(m_Panel, "Italiano", UiFactory.CardColor, () => Language = SpeechLanguage.Italian, 20);
-            UiFactory.Place((RectTransform)m_Italian.transform, 276, 226, 140, 50);
+            m_LanguageLabel = UiFactory.CreateText(m_Panel, "LanguageLabel", "", 18);
+            m_LanguageLabel.color = UiFactory.MutedTextColor;
+            UiFactory.Place(m_LanguageLabel.rectTransform, 24, 238, k_Width - 236, 40);
+            AppLanguage.Changed += RefreshControls;
             var clear = UiFactory.CreateButton(m_Panel, "Clear", UiFactory.CardColor, ClearCards, 20);
             UiFactory.Place((RectTransform)clear.transform, k_Width - 184, 226, 160, 50);
 

@@ -15,9 +15,17 @@ language models, the image questions and the voice. Nothing is sent to a server.
 The project is built on the open-source on-device AI stack from [Google AI Edge](https://github.com/google-ai-edge):
 the Gallery app's experiences, the LiteRT-LM runtime, and the LiteRT-LM models published for it.
 
-Replies in every experience can be spoken by neural voices (Piper, through sherpa-onnx), in **English** and
-**Italian**. Each reply is read by the voice of its language, detected from the text. Ask in Italian and Gemma answers
-in Italian, read by the Italian voice. The system text-to-speech engine on Quest is disabled.
+**Language.** The main menu sets one language, **English** or **Italiano**, for the whole app: every model reply, the
+voice that reads it and speech input. The reply is kept in that language even when a persona or your instructions are
+written in another, so a reply never mixes languages or switches voices.
+
+Replies in every experience can be spoken by neural voices (Piper, through sherpa-onnx). The system text-to-speech
+engine on Quest is disabled.
+
+**Speech input.** Press **Talk** in Chat, Point & Ask or Tabletop Garden, speak, and press **Stop**. Whisper base
+(through sherpa-onnx) turns your words into text on the headset, in the language set in the main menu, in about a
+second and a half. The audio never leaves the headset. Download "Speech input" in the main menu first; the app asks for
+the microphone permission the first time you talk.
 
 **My instructions** lets you tell the model, in plain words, how to reply. For example: "I'm on a strict diet. If I
 point at cake or junk food, make fun of me for it." The instructions apply in Spatial Chat, Point & Ask and What's That?,
@@ -34,7 +42,7 @@ What's That? panel. It offers a few presets (Strict diet, Kid-friendly, Plant lo
   git lfs install
   ```
 
-- **Storage on the headset:** about 3.1 GB for the models and both voices.
+- **Storage on the headset:** about 3.3 GB for the models, both voices and speech input.
 - **Hugging Face token:** only needed for Tiny Garden (see below).
 
 ## Getting started
@@ -62,6 +70,7 @@ commits. They resume after interruption and can be deleted from the launcher.
 | FunctionGemma 270M Tiny Garden (`litert-community/functiongemma-270m-ft-tiny-garden`) | Tabletop Garden | 289 MB | Gated (auto-approve) |
 | Piper "alba" voice (`csukuangfj/vits-piper-en_GB-alba-medium`) | Spoken replies in English | 81 MB | Open |
 | Piper "paola" voice (`csukuangfj/vits-piper-it_IT-paola-medium`) | Spoken replies in Italian | 82 MB | Open |
+| Whisper base, int8 (`csukuangfj/sherpa-onnx-whisper-base`) | Speech input in English and Italian | 161 MB | Open |
 
 For the gated Tiny Garden model:
 
@@ -79,16 +88,18 @@ The token stays on the device. **Never commit it.**
 
 ```
 Assets/AIEdge/                 All port code (asmdef AIEdge, namespace AIEdge)
-  Core/                        LLM engine and service, model catalog/downloader/store, speech engine, voice pack, language detection
+  Core/                        LLM engine and service, model catalog/downloader/store, speech engine, speech input, voice pack,
+                               app language, language detection
   Camera/                      Passthrough camera capture and crops
   Spatial/                     Depth service, depth-based measurement and placement
   Experiences/Chat|AskImage|TinyGarden|WhatsThat/
-  UI/                          Launcher, UI factory, Markdown → TextMeshPro, voice toggle
+  UI/                          Launcher, UI factory, Markdown → TextMeshPro, voice toggle, Talk button
   Diagnostics/SelfTest.cs      On-device self-tests
   Tests/Editor/                EditMode unit tests
 Assets/Plugins/Android/LiteRtBridge.androidlib/
                                Kotlin bridge: LiteRT-LM (LlmBridge), system TTS (SpeechBridge),
-                               neural TTS (NeuralSpeechBridge), sherpa-onnx jar + arm64 native library
+                               neural TTS (NeuralSpeechBridge), speech input (RecognizerBridge),
+                               sherpa-onnx jar + arm64 native library
 Assets/MRTemplateAssets/       Unity MR template code and assets
 ```
 
@@ -119,6 +130,7 @@ Notes:
    - Garden: `garden`, `garden_view`
    - Depth: `depth`, `depth_ask`, `depth_place`, `depth_garden`
    - Voice: `speech`, `speech_it`
+   - Speech input: `stt`
 3. Results are logged as `SELFTEST|{json}` lines (logcat tag `Unity`) and written to `selftest_results.txt` in the same folder.
 4. Delete `selftest.json` afterwards, or the tests run on every launch.
 
@@ -139,6 +151,7 @@ runtime under their own terms:
 | [Piper](https://github.com/rhasspy/piper) "alba" voice: training data from the [University of Edinburgh](https://datashare.ed.ac.uk/handle/10283/3270) | CC BY 4.0 |
 | [Piper](https://github.com/rhasspy/piper) "paola" voice: training data from [paolapersico1/Voice-Dataset-Italian](https://huggingface.co/datasets/paolapersico1/Voice-Dataset-Italian) | CC0 1.0 |
 | espeak-ng data, downloaded with each voice for phonemization | GPL-3.0 |
+| [Whisper](https://github.com/openai/whisper) base, OpenAI (ONNX export by sherpa-onnx), downloaded for speech input | MIT |
 | [LiteRT](https://github.com/google-ai-edge/LiteRT) 2.3.0 interpreter (`com.google.ai.edge.litert:litert`) | Apache 2.0 |
 | MediaPipe [interactive segmenter](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter) "magic touch" model (`magic_touch.tflite`, bundled) | See its model card |
 | Unity Mixed Reality template and package samples | Unity Companion License |
