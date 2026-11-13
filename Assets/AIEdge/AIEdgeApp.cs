@@ -58,6 +58,13 @@ namespace AIEdge
 
         void Awake()
         {
+            // Person detection runs app-wide, off at launch: holding volume up starts it, with the targeting display.
+            if (FindAnyObjectByType<PersonDetector>() == null)
+                gameObject.AddComponent<PersonDetector>();
+            if (FindAnyObjectByType<DetectionSwitch>() == null)
+                gameObject.AddComponent<DetectionSwitch>();
+            if (FindAnyObjectByType<TargetingHud>() == null)
+                gameObject.AddComponent<TargetingHud>();
             if (m_WhatsThat == null)
                 m_WhatsThat = new GameObject("WhatsThat").AddComponent<WhatsThatPanel>();
             if (m_Instructions == null)

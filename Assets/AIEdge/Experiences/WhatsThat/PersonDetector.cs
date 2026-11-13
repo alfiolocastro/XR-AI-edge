@@ -62,7 +62,6 @@ namespace AIEdge.WhatsThat
     public class PersonDetector : MonoBehaviour
     {
         const string k_BridgeClass = "com.xraiedge.litertlm.DetectorBridge";
-        const string k_EnabledKey = "AIEdge.PersonDetection";
         const int k_Size = 320;
         // Frame units are millimeters at 1 m and grow with distance, so the border and label keep their apparent size.
         const float k_FrameUnitsPerMeter = 1000f;
@@ -73,7 +72,7 @@ namespace AIEdge.WhatsThat
 
         static readonly Color k_FrameColor = new Color(1f, 0.78f, 0.25f, 0.9f);
         static readonly Color k_TargetColor = new Color(1f, 0.12f, 0.08f, 0.95f);
-        static readonly Color k_HudColor = new Color(1f, 0.3f, 0.24f, 1f);
+        static readonly Color k_HudColor = new Color(1f, 0.82f, 0.76f, 1f);
 
         [SerializeField, Tooltip("Seconds between detections.")]
         float m_Interval = 0.2f;
@@ -84,16 +83,29 @@ namespace AIEdge.WhatsThat
         [SerializeField, Tooltip("Seconds a person stays shown after the last sighting.")]
         float m_KeepSeconds = 0.8f;
 
-        /// <summary>Whether people are detected. Remembered between sessions.</summary>
+        static bool s_Enabled;
+
+        /// <summary>
+        /// Whether people are detected, anywhere in the app (the camera streams meanwhile). Off at every launch;
+        /// <see cref="DetectionSwitch"/> turns it on.
+        /// </summary>
         public static bool Enabled
         {
-            get => PlayerPrefs.GetInt(k_EnabledKey, 1) == 1;
+            get => s_Enabled;
             set
             {
-                PlayerPrefs.SetInt(k_EnabledKey, value ? 1 : 0);
-                PlayerPrefs.Save();
+                if (s_Enabled == value)
+                    return;
+                s_Enabled = value;
+                EnabledChanged?.Invoke();
             }
         }
+
+        /// <summary>Raised when <see cref="Enabled"/> changes.</summary>
+        public static event Action EnabledChanged;
+
+        /// <summary>The detector, once the app has created it.</summary>
+        public static PersonDetector Instance { get; private set; }
 
         /// <summary>Raised after each processed frame.</summary>
         public event Action Updated;
@@ -146,6 +158,7 @@ namespace AIEdge.WhatsThat
         float m_Next;
         bool m_ReadbackPending;
         bool m_Unavailable;
+        bool m_Streaming;
         int m_NextId;
 
         /// <summary>True on devices that can run the detector.</summary>
@@ -153,6 +166,8 @@ namespace AIEdge.WhatsThat
 
         void Awake()
         {
+            Instance = this;
+            EnabledChanged += OnEnabledChanged;
             m_FrameRoot = new GameObject("PeopleFrames").transform;
             m_RightPosition = new InputAction("PeopleRightPosition", binding: "<XRController>{RightHand}/devicePosition");
             m_RightTracked = new InputAction("PeopleRightTracked", InputActionType.Button, "<XRController>{RightHand}/isTracked");
@@ -174,6 +189,31 @@ namespace AIEdge.WhatsThat
             m_RightTracked.Disable();
             m_LeftPosition.Disable();
             m_LeftTracked.Disable();
+            Clear();
+        }
+
+        // The camera streams while detection is on; switching off forgets everyone.
+        void OnEnabledChanged()
+        {
+            if (m_Camera == null)
+                m_Camera = FindAnyObjectByType<PassthroughFrameCapture>();
+            if (Enabled && !m_Streaming && m_Camera != null)
+            {
+                m_Camera.StartStreaming();
+                m_Streaming = true;
+            }
+            else if (!Enabled && m_Streaming)
+            {
+                m_Camera.StopStreaming();
+                m_Streaming = false;
+            }
+
+            if (!Enabled)
+                Clear();
+        }
+
+        void Clear()
+        {
             foreach (var person in m_People)
                 Destroy(person.Frame.gameObject);
             m_People.Clear();
@@ -183,6 +223,11 @@ namespace AIEdge.WhatsThat
 
         void OnDestroy()
         {
+            EnabledChanged -= OnEnabledChanged;
+            if (m_Streaming && m_Camera != null)
+                m_Camera.StopStreaming();
+            if (Instance == this)
+                Instance = null;
             m_Bridge?.Call("close");
             m_Bridge?.Dispose();
             m_Bridge = null;

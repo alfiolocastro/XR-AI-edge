@@ -92,8 +92,8 @@ namespace AIEdge.WhatsThat
             set => AppLanguage.Set(value);
         }
 
-        /// <summary>The background person detector (frames around people, with their distance).</summary>
-        public PersonDetector People => m_People;
+        /// <summary>The app's person detector (frames around people, with their distance).</summary>
+        public PersonDetector People => m_People != null ? m_People : m_People = PersonDetector.Instance;
 
         ModelInfo Model => ModelCatalog.Gemma4E2B;
 
@@ -126,9 +126,6 @@ namespace AIEdge.WhatsThat
             m_Pointer.transform.SetParent(transform, false);
             m_Pointer.enabled = false;
             m_Segmenter = gameObject.AddComponent<ObjectSegmenter>();
-            m_People = gameObject.AddComponent<PersonDetector>();
-            m_People.enabled = false;
-            m_People.Updated += RefreshPeople;
         }
 
         void OnEnable() => m_Pointer.Selected += OnSelected;
@@ -139,6 +136,10 @@ namespace AIEdge.WhatsThat
         {
             UserInstructions.Changed -= RefreshInstructions;
             AppLanguage.Changed -= RefreshControls;
+            if (People != null)
+                People.Updated -= RefreshPeople;
+            if (DetectionSwitch.Instance != null)
+                DetectionSwitch.Instance.Changed -= RefreshPeople;
             Unsubscribe();
             if (m_CardRoot != null)
                 Destroy(m_CardRoot.gameObject);
@@ -161,7 +162,6 @@ namespace AIEdge.WhatsThat
             transform.rotation *= Quaternion.Euler(25f, 0f, 0f);
             m_Camera.StartStreaming();
             m_Pointer.enabled = true;
-            m_People.enabled = true;
             Subscribe();
             _ = PrepareAsync();
         }
@@ -176,7 +176,6 @@ namespace AIEdge.WhatsThat
 
             Unsubscribe();
             m_Pointer.enabled = false;
-            m_People.enabled = false;
             m_Camera.StopStreaming();
             m_Panel.gameObject.SetActive(false);
             m_CardRoot.gameObject.SetActive(false);
@@ -556,14 +555,22 @@ namespace AIEdge.WhatsThat
             var people = UiFactory.CreateButton(m_Panel, "People", UiFactory.CardColor, TogglePeople, 18);
             UiFactory.Place((RectTransform)people.transform, k_Width - 184, 340, 160, 48);
             m_PeopleToggleLabel = people.GetComponentInChildren<TextMeshProUGUI>();
+            if (People != null)
+                People.Updated += RefreshPeople;
+            if (DetectionSwitch.Instance != null)
+                DetectionSwitch.Instance.Changed += RefreshPeople;
 
             m_CardRoot = new GameObject("WhatsThatCards").transform;
             RefreshControls();
         }
 
+        // Same as holding volume up: arms detection (it starts after the boot), or turns it off.
         void TogglePeople()
         {
-            PersonDetector.Enabled = !PersonDetector.Enabled;
+            if (DetectionSwitch.Instance != null)
+                DetectionSwitch.Instance.Toggle();
+            else
+                PersonDetector.Enabled = !PersonDetector.Enabled;
             RefreshPeople();
         }
 
@@ -573,17 +580,22 @@ namespace AIEdge.WhatsThat
             if (m_PeopleSummary == null)
                 return;
             var on = PersonDetector.Enabled;
-            m_PeopleToggleLabel.text = on ? "People: on" : "People: off";
-            if (!on)
-                m_PeopleSummary.text = "People detection is off";
-            else if (m_People.Error != null)
-                m_PeopleSummary.text = $"People detection: {m_People.Error}";
+            var arming = DetectionSwitch.Instance != null && DetectionSwitch.Instance.Current == DetectionSwitch.Mode.Arming;
+            m_PeopleToggleLabel.text = on ? "People: on" : arming ? "Starting..." : "People: off";
+            if (arming)
+                m_PeopleSummary.text = "People detection starts in a few seconds";
+            else if (!on)
+                m_PeopleSummary.text = "People detection is off · hold volume up for 2 s";
+            else if (People == null)
+                m_PeopleSummary.text = "People detection unavailable";
+            else if (People.Error != null)
+                m_PeopleSummary.text = $"People detection: {People.Error}";
             else if (!PersonDetector.IsSupported)
                 m_PeopleSummary.text = "People detection runs on the headset";
             else
             {
                 var distances = new List<float>();
-                foreach (var person in m_People.People)
+                foreach (var person in People.People)
                     distances.Add(person.Distance);
                 m_PeopleSummary.text = PersonMath.Summary(distances, Language);
             }

@@ -32,11 +32,25 @@ namespace AIEdge
             m_CameraAccess = GetComponent<PassthroughCameraAccess>();
         }
 
-        /// <summary>Starts the camera stream. Keep it off when not needed: it costs power and bandwidth.</summary>
-        public void StartStreaming() => m_CameraAccess.enabled = true;
+        int m_Users;
 
-        /// <summary>Stops the camera stream.</summary>
-        public void StopStreaming() => m_CameraAccess.enabled = false;
+        /// <summary>
+        /// Starts the camera stream for one user (a panel, person detection). Keep it off when not needed: it costs
+        /// power and bandwidth. Each call needs a matching <see cref="StopStreaming"/>.
+        /// </summary>
+        public void StartStreaming()
+        {
+            m_Users++;
+            m_CameraAccess.enabled = true;
+        }
+
+        /// <summary>Stops the camera stream once its last user is done.</summary>
+        public void StopStreaming()
+        {
+            m_Users = Mathf.Max(0, m_Users - 1);
+            if (m_Users == 0)
+                m_CameraAccess.enabled = false;
+        }
 
         void Start()
         {
