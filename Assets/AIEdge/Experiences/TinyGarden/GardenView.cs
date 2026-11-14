@@ -5,6 +5,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.XR.Hands;
 using UnityEngine.XR.Interaction.Toolkit;
+using UnityEngine.XR.Interaction.Toolkit.Attachment;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.UI;
 
@@ -34,6 +35,13 @@ namespace AIEdge.TinyGarden
         static readonly Color k_Droopy = new Color(0.6f, 0.62f, 0.3f);
         static readonly Color k_Selected = new Color(0.3f, 0.6f, 1f);
         static readonly Color k_Hovered = new Color(0.85f, 0.9f, 1f);
+        static readonly Color k_DropTarget = new Color(0.4f, 0.95f, 0.35f);
+        // Pale, so the seeds stand out on dry and wet soil alike.
+        static readonly Color k_SeedColor = new Color(0.95f, 0.88f, 0.62f);
+        const int k_SpilledSeeds = 24;
+        const float k_TiltSeconds = 0.2f;
+        const float k_SeedPourSeconds = 0.8f;
+        const float k_SeedRestSeconds = 1.2f;
         static MaterialPropertyBlock s_Block;
         static Material s_Material;
 
@@ -48,6 +56,12 @@ namespace AIEdge.TinyGarden
 
         /// <summary>Plots picked by pointing, used for "here" and "these".</summary>
         public IReadOnlyCollection<int> Selection => m_Selection;
+
+        /// <summary>Seeds shown falling from packets so far (for tests).</summary>
+        public int SeedsSpilled { get; private set; }
+
+        /// <summary>The plot a held seed packet would be planted in if let go now (lit green), or 0.</summary>
+        public int DropTarget => m_DropTarget;
 
         class PlotView
         {
@@ -65,6 +79,9 @@ namespace AIEdge.TinyGarden
         readonly float[] m_PourTime = new float[GardenState.PlotCount + 1];
         XRHandSubsystem m_Hands;
         int m_Hovered;
+        int m_DropTarget;
+        readonly List<(Transform packet, Vector3 home)> m_Pouring = new List<(Transform, Vector3)>();
+        readonly List<(XRGrabInteractable grab, Transform packet)> m_Packets = new List<(XRGrabInteractable, Transform)>();
         float m_HoverTime;
         Transform m_Can;
         Transform m_Spout;
@@ -123,6 +140,12 @@ namespace AIEdge.TinyGarden
             return new Vector3((column - 1) * PlotPitch, k_SoilTop, (1 - row) * PlotPitch);
         }
 
+        /// <summary>
+        /// The plot a seed packet at a local position plants in when let go: over a plot and less than 30 cm above the
+        /// soil; else 0.
+        /// </summary>
+        public static int DropPlot(Vector3 local) => local.y < k_SoilTop + k_PacketDropHeight ? PlotAtLocal(local) : 0;
+
         /// <summary>The plot under a local position on the planter, or 0.</summary>
         public static int PlotAtLocal(Vector3 local)
         {
@@ -140,6 +163,7 @@ namespace AIEdge.TinyGarden
             State?.Tick(Time.deltaTime);
             UpdatePointing();
             UpdatePouring();
+            UpdateDropTarget();
         }
 
         // ---- Pointing -------------------------------------------------------------------------------------------
@@ -254,14 +278,130 @@ namespace AIEdge.TinyGarden
             Destroy(drop, 0.7f);
         }
 
+        // While a seed packet is held, the plot it would be planted in lights up.
+        void UpdateDropTarget()
+        {
+            var target = 0;
+            foreach (var (grab, packet) in m_Packets)
+                if (grab.isSelected)
+                    target = DropPlot(transform.InverseTransformPoint(packet.position));
+            if (target == m_DropTarget)
+                return;
+            m_DropTarget = target;
+            RefreshHighlights();
+        }
+
         void OnPacketReleased(Transform packet, Seed seed, Vector3 home)
         {
             var local = transform.InverseTransformPoint(packet.position);
-            var plot = local.y < k_SoilTop + k_PacketDropHeight ? PlotAtLocal(local) : 0;
-            packet.localPosition = home;
-            packet.localRotation = Quaternion.identity;
+            var plot = DropPlot(local);
+            var moved = Vector3.Distance(local, home);
+            Debug.Log($"[AIEdge] Garden: let go of the {GardenState.Name(seed)} packet {(local.y - k_SoilTop) * 100f:0} cm above the soil, plot {plot}");
+            if (plot != 0)
+                StartCoroutine(PourPacket(packet, home));
+            else
+                ReturnPacket(packet, home);
+            m_DropTarget = 0;
+            RefreshHighlights();
             if (plot != 0)
                 HandAction?.Invoke($"dropped a {GardenState.Name(seed)} packet on plot {plot}", State.Plant(seed, new[] { plot }));
+            else if (moved > 0.05f)
+                HandAction?.Invoke($"let go of the {GardenState.Name(seed)} packet away from the plots",
+                    new List<GardenEvent> { new GardenEvent { message = "hold it over a plot until the plot lights up green, then let go" } });
+        }
+
+        static void ReturnPacket(Transform packet, Vector3 home)
+        {
+            packet.localPosition = home;
+            packet.localRotation = Quaternion.identity;
+        }
+
+        // The packet stays where it was let go, tips over and pours its seeds onto the soil, then goes back beside the
+        // planter. It can't be grabbed while pouring.
+        System.Collections.IEnumerator PourPacket(Transform packet, Vector3 home)
+        {
+            var grab = packet.GetComponent<XRGrabInteractable>();
+            m_Pouring.Add((packet, home));
+            if (grab != null)
+                grab.enabled = false;
+
+            // Tip the top of the packet down, towards the side it already leans to.
+            var start = packet.rotation;
+            var lean = Vector3.ProjectOnPlane(packet.up, transform.up);
+            var axis = Vector3.Cross(transform.up, lean.sqrMagnitude > 1e-4f ? lean : transform.forward).normalized;
+            var end = Quaternion.AngleAxis(130f, axis) * Quaternion.FromToRotation(packet.up, transform.up) * start;
+            for (var t = 0f; t < k_TiltSeconds; t += Time.deltaTime)
+            {
+                packet.rotation = Quaternion.Slerp(start, end, t / k_TiltSeconds);
+                yield return null;
+            }
+            packet.rotation = end;
+
+            for (var i = 0; i < k_SpilledSeeds; i++)
+            {
+                // From the opening at the top of the packet, now pointing down.
+                SpillSeed(packet.TransformPoint(new Vector3(0f, 0.045f, 0f)), packet.up);
+                if (i % 3 == 2)
+                    yield return new WaitForSeconds(k_SeedPourSeconds * 3f / k_SpilledSeeds);
+            }
+            yield return new WaitForSeconds(0.15f);
+
+            m_Pouring.RemoveAll(p => p.packet == packet);
+            ReturnPacket(packet, home);
+            if (grab != null)
+                grab.enabled = true;
+        }
+
+        void SpillSeed(Vector3 opening, Vector3 spout)
+        {
+            var jitter = UnityEngine.Random.insideUnitCircle * 0.01f;
+            var position = opening + transform.right * jitter.x + transform.forward * jitter.y;
+            var seed = Primitive(PrimitiveType.Sphere, null, position, new Vector3(0.011f, 0.007f, 0.011f) * transform.lossyScale.y, k_SeedColor);
+            seed.transform.rotation = UnityEngine.Random.rotation;
+            var body = seed.AddComponent<Rigidbody>();
+            body.detectCollisions = false;
+            var spread = UnityEngine.Random.insideUnitCircle * 0.05f;
+            body.linearVelocity = spout * 0.15f + transform.right * spread.x + transform.forward * spread.y;
+            body.angularVelocity = UnityEngine.Random.insideUnitSphere * 8f;
+            SeedsSpilled++;
+            StartCoroutine(SettleSeed(seed, body));
+        }
+
+        // A falling seed comes to rest on the soil, stays a moment, then sinks into it.
+        System.Collections.IEnumerator SettleSeed(GameObject seed, Rigidbody body)
+        {
+            Destroy(seed, 4f);
+            var soil = k_SoilTop + 0.003f;
+            while (seed != null && transform.InverseTransformPoint(seed.transform.position).y > soil)
+                yield return null;
+            if (seed == null)
+                yield break;
+            body.isKinematic = true;
+            var local = transform.InverseTransformPoint(seed.transform.position);
+            seed.transform.position = transform.TransformPoint(new Vector3(local.x, soil, local.z));
+            yield return new WaitForSeconds(k_SeedRestSeconds);
+            var size = seed.transform.localScale;
+            for (var t = 0f; t < 0.4f && seed != null; t += Time.deltaTime)
+            {
+                seed.transform.localScale = size * (1f - t / 0.4f);
+                yield return null;
+            }
+            if (seed != null)
+                Destroy(seed);
+        }
+
+        void OnDisable()
+        {
+            // Pouring stops with the view: put any tipped packet back.
+            foreach (var (packet, home) in m_Pouring)
+                if (packet != null)
+                {
+                    ReturnPacket(packet, home);
+                    var grab = packet.GetComponent<XRGrabInteractable>();
+                    if (grab != null)
+                        grab.enabled = true;
+                }
+            m_Pouring.Clear();
         }
 
         void OnFlowerPulled(int plot, Transform flower)
@@ -297,7 +437,8 @@ namespace AIEdge.TinyGarden
         {
             for (var number = 1; number <= GardenState.PlotCount; number++)
             {
-                var color = m_Selection.Contains(number) ? k_Selected : number == m_Hovered ? k_Hovered : k_Wood * 0.8f;
+                var color = number == m_DropTarget ? k_DropTarget : m_Selection.Contains(number) ? k_Selected :
+                    number == m_Hovered ? k_Hovered : k_Wood * 0.8f;
                 SetColor(m_Plots[number - 1].Rim, color);
             }
         }
@@ -460,6 +601,8 @@ namespace AIEdge.TinyGarden
             m_CanGrab.movementType = XRBaseInteractable.MovementType.Instantaneous;
             m_CanGrab.useDynamicAttach = true;
             m_CanGrab.throwOnDetach = false;
+            // Grabbed with the ray from afar, it stays out there (so a planter beyond reach can still be watered).
+            m_CanGrab.farAttachMode = InteractableFarAttachMode.Far;
             m_CanGrab.selectExited.AddListener(OnCanReleased);
             can.SetActive(true);
         }
@@ -487,7 +630,13 @@ namespace AIEdge.TinyGarden
                 grab.movementType = XRBaseInteractable.MovementType.Instantaneous;
                 grab.useDynamicAttach = true;
                 grab.throwOnDetach = false;
+                // Grabbed with the ray from afar, the packet stays at the end of the ray instead of jumping to the hand,
+                // so it can be swept over the plots of a planter beyond reach. Grabbed up close, it's in the hand.
+                grab.farAttachMode = InteractableFarAttachMode.Far;
+                grab.selectEntered.AddListener(args =>
+                    Debug.Log($"[AIEdge] Garden: {args.interactorObject.transform.name} on {args.interactorObject.transform.parent?.name} grabbed the {GardenState.Name(seed)} packet"));
                 grab.selectExited.AddListener(_ => OnPacketReleased(packet.transform, seed, home));
+                m_Packets.Add((grab, packet.transform));
                 packet.SetActive(true);
             }
         }

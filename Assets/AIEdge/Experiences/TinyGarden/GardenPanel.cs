@@ -468,7 +468,7 @@ namespace AIEdge.TinyGarden
             var move = UiFactory.CreateButton(m_Panel, "Move garden here", UiFactory.CardColor, PlaceGarden, 17);
             UiFactory.Place((RectTransform)move.transform, 324, 600, 294, 30);
 
-            AddLog("Tell the garden what to do, or use your hands: pour the can, drop a seed packet on a plot, pull a flower to pick it.");
+            AddLog("Tell the garden what to do, or use your hands: grab a seed packet (pinch or fist; from afar, with the hand ray), hold it over a plot until it turns green and let go; tilt the can over a plot; pull a flower to pick it.");
             RefreshSelection();
             RefreshControls();
         }
