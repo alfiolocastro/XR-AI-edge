@@ -11,8 +11,9 @@ namespace AIEdge.WhatsThat
     /// view, monospaced readouts in red. Left, a visual-scan column with live detector numbers over scrolling data.
     /// Right, a scrolling sensor log. Top, the target analysis (subjects, locked targets, nearest range and threat,
     /// detector speed) and a MATCH box. Side scales track head pitch and the nearest range. Bottom, uptime and mode.
-    /// While detection arms it boots with a countdown; while volume up is held, a bar shows the hold. It follows the
-    /// head with a little lag, and nothing on it can be pointed at.
+    /// Nothing shows while the key is held or during the pause before detection starts: the display appears all at
+    /// once, with the start music (Resources/TerminatorST, else a tone), the tint snapping in and the readouts typing themselves out. It follows the head with a
+    /// little lag, and nothing on it can be pointed at.
     /// </summary>
     public class TargetingHud : MonoBehaviour
     {
@@ -21,6 +22,10 @@ namespace AIEdge.WhatsThat
         const int k_RightRows = 16;
         const float k_ScrollInterval = 0.12f;
         const float k_RevealCharsPerSecond = 260f;
+        const float k_TintInSeconds = 0.25f;
+        // Optional music for the moment the display comes on: an AudioClip at Resources/<name>. Without it, a tone.
+        const string k_SoundtrackResource = "TerminatorST";
+        const float k_SoundtrackVolume = 0.85f;
         const string k_Mono = "<mspace=0.6em>";
 
         static readonly Color k_Tint = new Color(0.85f, 0.04f, 0.02f, 0.34f);
@@ -35,6 +40,12 @@ namespace AIEdge.WhatsThat
         /// <summary>The red tint's current opacity (0 when detection is off).</summary>
         public float TintAlpha => m_Tint != null ? m_Tint.color.a : 0f;
 
+        /// <summary>True while the start music plays.</summary>
+        public bool IsPlayingSoundtrack => m_Music != null && m_Music.isPlaying;
+
+        /// <summary>True when the start music was found (else a tone plays).</summary>
+        public bool HasSoundtrack => m_Soundtrack != null;
+
         /// <summary>The analysis block's text now (for tests).</summary>
         public string AnalysisText => m_Analysis != null ? m_Analysis.text : "";
 
@@ -44,9 +55,6 @@ namespace AIEdge.WhatsThat
         readonly System.Random m_Random = new System.Random(1984);
         RectTransform m_Root;
         Image m_Tint;
-        GameObject m_Boot;
-        TextMeshProUGUI m_BootText;
-        RectTransform m_BootBar;
         GameObject m_Live;
         TextMeshProUGUI m_LeftLive;
         TextMeshProUGUI m_Left;
@@ -57,11 +65,9 @@ namespace AIEdge.WhatsThat
         TextMeshProUGUI m_ModeText;
         RectTransform m_PitchMarker;
         RectTransform m_RangeMarker;
-        GameObject m_Hold;
-        TextMeshProUGUI m_HoldText;
-        RectTransform m_HoldBar;
         AudioSource m_Audio;
-        AudioClip m_BootClip;
+        AudioSource m_Music;
+        AudioClip m_Soundtrack;
         AudioClip m_OnClip;
         AudioClip m_OffClip;
         DetectionSwitch.Mode m_LastMode;
@@ -80,9 +86,18 @@ namespace AIEdge.WhatsThat
             m_Audio = gameObject.AddComponent<AudioSource>();
             m_Audio.playOnAwake = false;
             m_Audio.spatialBlend = 0f;
-            m_BootClip = Sweep("HudBoot", 180f, 900f, 0.7f);
-            m_OnClip = Sweep("HudOn", 1200f, 1500f, 0.18f);
+            m_OnClip = Sweep("HudOn", 180f, 1400f, 0.6f);
             m_OffClip = Sweep("HudOff", 700f, 160f, 0.45f);
+            m_Music = gameObject.AddComponent<AudioSource>();
+            m_Music.playOnAwake = false;
+            m_Music.spatialBlend = 0f;
+            m_Music.volume = k_SoundtrackVolume;
+            m_Soundtrack = Resources.Load<AudioClip>(k_SoundtrackResource);
+            if (m_Soundtrack != null)
+            {
+                m_Soundtrack.LoadAudioData();
+                m_Music.clip = m_Soundtrack;
+            }
         }
 
         void OnDestroy()
@@ -103,8 +118,8 @@ namespace AIEdge.WhatsThat
                 OnModeChanged(m_LastMode, mode);
             m_LastMode = mode;
 
-            var holding = detection.HoldProgress > 0.05f;
-            var visible = mode != DetectionSwitch.Mode.Off || holding;
+            // Only once detection is on: no hint while the key is held or during the pause.
+            var visible = mode == DetectionSwitch.Mode.On;
             if (m_Root.gameObject.activeSelf != visible)
             {
                 m_Root.gameObject.SetActive(visible);
@@ -115,38 +130,29 @@ namespace AIEdge.WhatsThat
                 return;
             Follow(head.transform);
 
-            // Hold bar: how far into the 2 s hold that switches detection on or off.
-            m_Hold.SetActive(holding);
-            if (holding)
-            {
-                m_HoldText.text = k_Mono + (mode == DetectionSwitch.Mode.Off ? "HOLD TO ENGAGE" : "HOLD TO DISENGAGE");
-                m_HoldBar.localScale = new Vector3(Mathf.Clamp01(detection.HoldProgress), 1f, 1f);
-            }
-
-            // Boot: the tint fades in with the countdown.
-            var arming = mode == DetectionSwitch.Mode.Arming;
-            m_Boot.SetActive(arming);
-            var tint = mode == DetectionSwitch.Mode.On ? k_Tint.a :
-                arming ? k_Tint.a * (1f - detection.ArmingLeft / DetectionSwitch.ArmSeconds) : 0f;
+            var tint = k_Tint.a * Mathf.Clamp01((Time.unscaledTime - m_OnSince) / k_TintInSeconds);
             m_Tint.color = new Color(k_Tint.r, k_Tint.g, k_Tint.b, tint);
-            if (arming)
-            {
-                m_BootText.text = k_Mono + HudText.Countdown(detection.ArmingLeft) +
-                    ((int)(Time.unscaledTime * 4f) % 2 == 0 ? "_" : " ");
-                m_BootBar.localScale = new Vector3(1f - detection.ArmingLeft / DetectionSwitch.ArmSeconds, 1f, 1f);
-            }
 
-            var on = mode == DetectionSwitch.Mode.On;
-            m_Live.SetActive(on);
-            if (on)
-                UpdateLive(head.transform);
+            UpdateLive(head.transform);
         }
 
         void OnModeChanged(DetectionSwitch.Mode from, DetectionSwitch.Mode to)
         {
-            var clip = to == DetectionSwitch.Mode.Arming ? m_BootClip : to == DetectionSwitch.Mode.On ? m_OnClip : m_OffClip;
-            if (m_Audio != null && clip != null)
-                m_Audio.PlayOneShot(clip);
+            // Sound only when the display appears or goes away; arming, or cancelling it, is silent.
+            // The music (or the tone without it) starts with the display; switching off cuts it.
+            if (to == DetectionSwitch.Mode.On && m_Soundtrack != null)
+            {
+                m_Music.Stop();
+                m_Music.Play();
+            }
+            else
+            {
+                if (from == DetectionSwitch.Mode.On && m_Music != null)
+                    m_Music.Stop();
+                var clip = to == DetectionSwitch.Mode.On ? m_OnClip : from == DetectionSwitch.Mode.On ? m_OffClip : null;
+                if (m_Audio != null && clip != null)
+                    m_Audio.PlayOneShot(clip);
+            }
             if (to != DetectionSwitch.Mode.On)
                 return;
             m_OnSince = Time.unscaledTime;
@@ -260,27 +266,6 @@ namespace AIEdge.WhatsThat
             // The tint, far larger than the view.
             m_Tint = Box(m_Root, "Tint", Vector2.zero, new Vector2(9000f, 9000f), new Color(k_Tint.r, k_Tint.g, k_Tint.b, 0f));
 
-            // Boot: countdown and progress bar in the middle.
-            m_Boot = new GameObject("Boot", typeof(RectTransform));
-            m_Boot.transform.SetParent(m_Root, false);
-            m_BootText = Text(m_Boot.transform, "Countdown", new Vector2(0f, 44f), new Vector2(1000f, 60f), 38, TextAlignmentOptions.Center);
-            Box(m_Boot.transform, "BarFrame", new Vector2(0f, -10f), new Vector2(504f, 14f), k_Line);
-            Box(m_Boot.transform, "BarBack", new Vector2(0f, -10f), new Vector2(500f, 10f), new Color(0.2f, 0f, 0f, 0.9f));
-            var bar = Box(m_Boot.transform, "Bar", new Vector2(-250f, -10f), new Vector2(500f, 10f), k_Text);
-            m_BootBar = bar.rectTransform;
-            m_BootBar.pivot = new Vector2(0f, 0.5f);
-            m_Boot.SetActive(false);
-
-            // Hold indicator, low in the middle.
-            m_Hold = new GameObject("Hold", typeof(RectTransform));
-            m_Hold.transform.SetParent(m_Root, false);
-            m_HoldText = Text(m_Hold.transform, "HoldText", new Vector2(0f, -166f), new Vector2(600f, 40f), 26, TextAlignmentOptions.Center);
-            Box(m_Hold.transform, "HoldBack", new Vector2(0f, -200f), new Vector2(300f, 8f), new Color(0.2f, 0f, 0f, 0.9f));
-            var holdBar = Box(m_Hold.transform, "HoldBar", new Vector2(-150f, -200f), new Vector2(300f, 8f), k_Text);
-            m_HoldBar = holdBar.rectTransform;
-            m_HoldBar.pivot = new Vector2(0f, 0.5f);
-            m_Hold.SetActive(false);
-
             m_Live = new GameObject("Live", typeof(RectTransform));
             m_Live.transform.SetParent(m_Root, false);
             var live = m_Live.transform;
@@ -310,7 +295,6 @@ namespace AIEdge.WhatsThat
             // Bottom: uptime and mode.
             m_Uptime = Reveal(Text(live, "Uptime", new Vector2(-570f, -330f), new Vector2(400f, 64f), 22, TextAlignmentOptions.TopLeft));
             m_ModeText = Reveal(Text(live, "Mode", new Vector2(570f, -330f), new Vector2(400f, 64f), 22, TextAlignmentOptions.TopRight));
-            m_Live.SetActive(false);
 
             m_Root.gameObject.SetActive(false);
         }

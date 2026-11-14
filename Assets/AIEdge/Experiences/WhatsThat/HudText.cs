@@ -5,8 +5,8 @@ using System.Text;
 namespace AIEdge.WhatsThat
 {
     /// <summary>
-    /// Text for the targeting display: the live analysis block from the detector's numbers, the boot countdown and
-    /// the decorative scrolling data rows. Monospaced capitals, so columns line up. Plain C# so it can be unit tested.
+    /// Text for the targeting display: the live analysis block from the detector's numbers and the decorative
+    /// scrolling data rows. Monospaced capitals, so columns line up. Plain C# so it can be unit tested.
     /// </summary>
     public static class HudText
     {
@@ -26,10 +26,6 @@ namespace AIEdge.WhatsThat
         /// <summary>The boxed line under MATCH: the nearest locked target, else what the system is doing.</summary>
         public static string Match(bool anyone, bool locked, ThreatLevel threat) =>
             locked ? $"HUMAN  ·  THREAT {ThreatName(threat)}" : anyone ? "ACQUIRING TARGET" : "SCANNING";
-
-        /// <summary>The boot line while detection arms.</summary>
-        public static string Countdown(float secondsLeft) =>
-            $"VISUAL ANALYSIS ONLINE IN {Math.Max(0, (int)Math.Ceiling(secondsLeft))}";
 
         /// <summary>Clock for the uptime readout.</summary>
         public static string Uptime(float seconds)

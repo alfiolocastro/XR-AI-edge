@@ -112,3 +112,7 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# Optional start music for the targeting display (copyrighted; local only, see README).
+/Assets/AIEdge/Resources/TerminatorST.*
+/Assets/AIEdge/Resources.meta

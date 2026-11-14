@@ -564,7 +564,7 @@ namespace AIEdge.WhatsThat
             RefreshControls();
         }
 
-        // Same as holding volume up: arms detection (it starts after the boot), or turns it off.
+        // Same as holding volume up: arms detection (it starts a few seconds later), or turns it off.
         void TogglePeople()
         {
             if (DetectionSwitch.Instance != null)
@@ -580,11 +580,9 @@ namespace AIEdge.WhatsThat
             if (m_PeopleSummary == null)
                 return;
             var on = PersonDetector.Enabled;
-            var arming = DetectionSwitch.Instance != null && DetectionSwitch.Instance.Current == DetectionSwitch.Mode.Arming;
-            m_PeopleToggleLabel.text = on ? "People: on" : arming ? "Starting..." : "People: off";
-            if (arming)
-                m_PeopleSummary.text = "People detection starts in a few seconds";
-            else if (!on)
+            // While arming it still reads as off: detection just starts a few seconds later.
+            m_PeopleToggleLabel.text = on ? "People: on" : "People: off";
+            if (!on)
                 m_PeopleSummary.text = "People detection is off · hold volume up for 2 s";
             else if (People == null)
                 m_PeopleSummary.text = "People detection unavailable";

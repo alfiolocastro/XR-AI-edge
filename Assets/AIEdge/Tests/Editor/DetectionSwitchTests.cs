@@ -77,13 +77,11 @@ namespace AIEdge.Tests
         }
 
         [Test]
-        public void HudText_MatchAndCountdown()
+        public void HudText_MatchAndUptime()
         {
             Assert.That(HudText.Match(true, true, ThreatLevel.High), Is.EqualTo("HUMAN  ·  THREAT HIGH"));
             Assert.That(HudText.Match(true, false, ThreatLevel.Low), Is.EqualTo("ACQUIRING TARGET"));
             Assert.That(HudText.Match(false, false, ThreatLevel.Unknown), Is.EqualTo("SCANNING"));
-            Assert.That(HudText.Countdown(4.2f), Is.EqualTo("VISUAL ANALYSIS ONLINE IN 5"));
-            Assert.That(HudText.Countdown(0f), Is.EqualTo("VISUAL ANALYSIS ONLINE IN 0"));
             Assert.That(HudText.Uptime(3725f), Is.EqualTo("01:02:05"));
         }
 

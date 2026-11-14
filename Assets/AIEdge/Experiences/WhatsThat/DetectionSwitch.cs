@@ -6,8 +6,8 @@ namespace AIEdge.WhatsThat
 {
     /// <summary>
     /// Turns person detection on and off. Detection starts off at every launch. Holding the headset's volume-up key
-    /// for <see cref="HoldSeconds"/> arms it: the targeting display boots for <see cref="ArmSeconds"/>, then detection
-    /// starts. Holding it again (or during the boot) turns it off. A short press still raises the volume. The People
+    /// for <see cref="HoldSeconds"/> arms it: nothing shows or sounds for <see cref="ArmSeconds"/>, then detection
+    /// starts and the targeting display appears all at once. Holding it again (or during the pause) turns it off. A short press still raises the volume. The People
     /// button in What's That? does the same as a hold.
     /// </summary>
     public class DetectionSwitch : MonoBehaviour

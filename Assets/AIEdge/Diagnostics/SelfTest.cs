@@ -789,8 +789,8 @@ namespace AIEdge.Diagnostics
             return report.ToString();
         }
 
-        // Detection switch: off at launch; a simulated 2 s volume-up hold arms it, the targeting display boots for
-        // 5 s, then detection runs with the red display (an injected person straight ahead shows the MATCH box);
+        // Detection switch: off at launch; a simulated 2 s volume-up hold arms it, nothing shows for 5 s, then
+        // detection runs with the red display (an injected person straight ahead shows the MATCH box);
         // holding again turns it all off. Long enough for screenshots taken from the computer.
         async Awaitable<string> TestDetectionSwitch()
         {
@@ -820,8 +820,8 @@ namespace AIEdge.Diagnostics
             await Awaitable.NextFrameAsync();
             if (detection.Current != DetectionSwitch.Mode.Off)
                 throw new Exception("A 1 s hold switched detection on.");
-            if (halfway < 0.35f || halfway > 0.65f || !holdShown)
-                throw new Exception($"Halfway through the hold the bar was at {halfway:P0}, shown {holdShown}.");
+            if (halfway < 0.35f || halfway > 0.65f || holdShown)
+                throw new Exception($"Halfway through the hold: progress {halfway:P0}, display shown {holdShown} (it must not hint).");
             await Awaitable.WaitForSecondsAsync(0.5f);
 
             // The 2 s hold arms it; detection starts 5 s later.
@@ -832,8 +832,9 @@ namespace AIEdge.Diagnostics
             var armedAt = Time.realtimeSinceStartup - 0.2f;
             await Awaitable.WaitForSecondsAsync(2.5f);
             var midTint = hud.TintAlpha;
-            if (PersonDetector.Enabled || midTint <= 0.02f || midTint >= 0.33f)
-                throw new Exception($"Mid-boot: detection {PersonDetector.Enabled}, tint {midTint:0.00}.");
+            var midShown = hud.IsShown;
+            if (PersonDetector.Enabled || midShown || midTint > 0f)
+                throw new Exception($"During the pause: detection {PersonDetector.Enabled}, display shown {midShown}, tint {midTint:0.00}.");
             var deadline = Time.realtimeSinceStartup + 5f;
             while (detection.Current != DetectionSwitch.Mode.On && Time.realtimeSinceStartup < deadline)
                 await Awaitable.NextFrameAsync();
@@ -843,7 +844,11 @@ namespace AIEdge.Diagnostics
             if (armSeconds < 4.5f || armSeconds > 5.6f)
                 throw new Exception($"Detection came on {armSeconds:0.0} s after the hold, not 5.");
 
-            // On: the display shows live numbers while frames are processed.
+            // On: the music starts with the display, which shows live numbers while frames are processed.
+            await Awaitable.NextFrameAsync();
+            var music = hud.HasSoundtrack ? (hud.IsPlayingSoundtrack ? "music playing" : "music NOT playing") : "no music (tone)";
+            if (hud.HasSoundtrack && !hud.IsPlayingSoundtrack)
+                throw new Exception("The start music didn't play.");
             var frames = detector.FrameCount;
             var until = Time.realtimeSinceStartup + 8f;
             while (Time.realtimeSinceStartup < until)
@@ -865,10 +870,10 @@ namespace AIEdge.Diagnostics
             // Holding again switches it all off.
             await Hold(2.2f);
             await Awaitable.WaitForSecondsAsync(0.3f);
-            if (detection.Current != DetectionSwitch.Mode.Off || PersonDetector.Enabled || hud.IsShown)
-                throw new Exception($"After the second hold: {detection.Current}, detection {PersonDetector.Enabled}, display {hud.IsShown}.");
+            if (detection.Current != DetectionSwitch.Mode.Off || PersonDetector.Enabled || hud.IsShown || hud.IsPlayingSoundtrack)
+                throw new Exception($"After the second hold: {detection.Current}, detection {PersonDetector.Enabled}, display {hud.IsShown}, music {hud.IsPlayingSoundtrack}.");
 
-            return $"held 2.2 s, on after {armSeconds:0.0} s (tint {midTint:0.00} mid-boot), {processed} frames in 8 s, " +
+            return $"held 2.2 s, on after {armSeconds:0.0} s with nothing shown before, {music}, {processed} frames in 8 s, " +
                 $"\"{analysis}\"; real volume key {(detection.HasKey ? "hooked" : "unavailable")}, " +
                 $"{detection.KeyEvents - keyEventsBefore} simulated key events";
         }
