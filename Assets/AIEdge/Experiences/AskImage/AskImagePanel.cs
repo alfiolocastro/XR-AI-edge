@@ -80,6 +80,9 @@ namespace AIEdge.AskImage
         /// <summary>True when the vision model is loaded, the camera streams and no question is running.</summary>
         public bool IsReady => m_ModelReady && m_Camera.IsReady && m_Pending == null && !m_Preparing;
 
+        /// <summary>The question in the text field.</summary>
+        public string Question => m_Question != null ? m_Question.text : "";
+
         /// <summary>True while the panel is open.</summary>
         public bool IsOpen => m_Panel != null && m_Panel.gameObject.activeSelf;
 
@@ -369,6 +372,14 @@ namespace AIEdge.AskImage
 
         void OnFramed(FramedRegion region) => Ask(region, m_Question.text);
 
+        // Spoken through the mic gesture: the words are the question, asked at once about what's straight ahead (the
+        // camera frame is taken now, after the hand has left the mouth). The Talk button only fills in the question.
+        void AskBySpeech(string question)
+        {
+            m_Question.text = question;
+            AskInFront(question);
+        }
+
         void RefreshControls()
         {
             if (m_CaptureButton == null)
@@ -402,8 +413,8 @@ namespace AIEdge.AskImage
             UiFactory.Place(m_Status.rectTransform, 24, 64, k_Width - 48, 50);
 
             var how = UiFactory.CreateText(m_Panel, "HowTo",
-                "Pinch with both hands and pull them apart to frame something, then let go. " +
-                "Or press Capture to ask about what's straight ahead.", 18);
+                "Pinch with both hands and pull them apart to frame something, or press Capture. " +
+                "Or just ask out loud with a fist (or a controller) at your mouth.", 18);
             UiFactory.Place(how.rectTransform, 24, 116, k_Width - 48, 52);
 
             var label = UiFactory.CreateText(m_Panel, "QuestionLabel", "Question", 18);
@@ -412,7 +423,7 @@ namespace AIEdge.AskImage
             m_Question = CreateInputField(m_Panel);
             m_Question.text = k_Questions[0];
             UiFactory.Place((RectTransform)m_Question.transform, 24, 204, k_Width - 172, 64);
-            var talk = MicButton.Create(m_Panel, text => m_Question.text = text, SetStatus, 20);
+            var talk = MicButton.Create(m_Panel, text => m_Question.text = text, SetStatus, 20, AskBySpeech);
             UiFactory.Place((RectTransform)talk.transform, k_Width - 136, 204, 112, 64);
 
             for (var i = 0; i < k_Questions.Length; i++)

@@ -54,7 +54,9 @@ a half. The audio never leaves the headset.
 Hold it there for about a third of a second and listening starts; speak, then lower your hand or controller and what
 you said is transcribed and used, exactly as with the Talk button. It drives the Talk button of the open panel (Chat,
 Point & Ask or Tabletop Garden). With no such panel open, it only shows a hint. While you speak, the fist can loosen a
-little without stopping.
+little without stopping. In Point & Ask, a question spoken this way is asked at once: the camera captures what's
+straight ahead and Gemma answers, with no need to frame anything or press Capture. The Talk button only fills in the
+question.
 
 **Start and stop signals.** However listening starts (Talk button, mic gesture, or **Try it** in the main menu):
 
@@ -160,7 +162,7 @@ Notes:
 ## Testing
 
 **EditMode unit tests** (text processing, chat history, garden rules, depth math, catalog, downloads, app language and
-reply prompts, personal instructions, voice and speech-input packs, mic gesture, person boxes, matching and threat levels, volume-key hold and targeting display text):
+reply prompts, personal instructions, voice and speech-input packs, mic gesture and its Talk-button routing, person boxes, matching and threat levels, volume-key hold and targeting display text):
 
 ```bash
 "<Unity.exe>" -batchmode -projectPath . -runTests -testPlatform EditMode -testFilter AIEdge -testResults results.xml -logFile -
@@ -171,7 +173,8 @@ reply prompts, personal instructions, voice and speech-input packs, mic gesture,
 1. Push a `selftest.json` to the app's files folder and launch the app. For example, `{"tests":["chat_multiturn","speech"]}` runs only the named tests; any other content runs all of them.
 2. The available tests are:
    - Downloads: `resume_download`, `small_download`, `gated_without_token`, `cancel_and_reset`, `unload_memory`
-   - Chat and Point & Ask: `chat_multiturn`, `ask_image`
+   - Chat and Point & Ask: `chat_multiturn`, `ask_image`, `ask_gesture` (words from the mic gesture are asked at once
+     about what's straight ahead; words from the Talk button only fill in the question)
    - What's That?: `whats_that`, `detection_switch` (off at launch; a simulated 2 s volume-up hold shows nothing for
      5 s, then detection starts with the red display, and a second hold turns it off), `people` (needs `people_test.jpg` next to `selftest.json`, such as TensorFlow's
      [beach test photo](https://github.com/tensorflow/models/blob/master/research/object_detection/test_images/image2.jpg):

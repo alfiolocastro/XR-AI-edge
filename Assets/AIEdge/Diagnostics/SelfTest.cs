@@ -49,6 +49,7 @@ namespace AIEdge.Diagnostics
             await Run("unload_memory", TestUnloadMemory);
             await Run("chat_multiturn", TestChatMultiTurn);
             await Run("ask_image", TestAskImage);
+            await Run("ask_gesture", TestAskGesture);
             await Run("garden", TestGarden);
             await Run("garden_view", TestGardenView);
             await Run("depth", TestDepth);
@@ -379,6 +380,63 @@ namespace AIEdge.Diagnostics
             camera.CaptureToFile(Path.Combine(Application.persistentDataPath, "selftest_frame.png"));
             return $"crop {result.Crop.x},{result.Crop.y} {result.Crop.width}x{result.Crop.height} of {camera.Resolution.x}x{camera.Resolution.y}; " +
                 $"TTFT {result.Stats.ttftSec:0.00}s {result.Stats.decodeTokPerSec:0.0} tok/s; answer \"{result.Answer.Trim()}\"";
+        }
+
+        // Point & Ask by voice: words spoken through the mic gesture are asked at once about what's straight ahead;
+        // words from the Talk button only fill in the question. (The words are handed over directly: the room may be
+        // silent.)
+        async Awaitable<string> TestAskGesture()
+        {
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            var ask = app.AskImage;
+            if (app.Chat.IsOpen)
+                app.Chat.Close();
+            if (!ask.IsOpen)
+                app.OpenAskImage();
+
+            var deadline = Time.realtimeSinceStartup + 120f;
+            while (!ask.IsReady && Time.realtimeSinceStartup < deadline)
+                await Awaitable.NextFrameAsync();
+            if (!ask.IsReady)
+                throw new TimeoutException("Point & Ask never became ready (model or camera).");
+            var mic = UI.MicButton.Current;
+            if (mic == null || !mic.transform.IsChildOf(ask.transform))
+                throw new Exception("Point & Ask's Talk button isn't the one the mic gesture drives.");
+
+            AskResult result = null;
+            void OnFinished(AskResult r) => result = r;
+            ask.AnswerFinished += OnFinished;
+            try
+            {
+                // Talk button: only the question changes.
+                const string typed = "What colors do you see?";
+                mic.DeliverForTests(typed, false);
+                await Awaitable.WaitForSecondsAsync(1.5f);
+                if (result != null || !ask.IsReady)
+                    throw new Exception("Words from the Talk button started an answer.");
+                if (ask.Question != typed)
+                    throw new Exception($"The Talk button didn't fill in the question: \"{ask.Question}\".");
+
+                // Mic gesture: asked at once.
+                const string spoken = "What is in front of me? Answer in one sentence.";
+                var started = Time.realtimeSinceStartup;
+                mic.DeliverForTests(spoken, true);
+                deadline = Time.realtimeSinceStartup + 90f;
+                while (result == null && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+                if (result == null)
+                    throw new TimeoutException("No answer to the spoken question.");
+                if (result.Error != null)
+                    throw new LlmException(result.Error);
+                if (result.Question != spoken || ask.Question != spoken)
+                    throw new Exception($"Asked \"{result.Question}\" instead of the spoken question.");
+                return $"Talk button only filled in the question; spoken question answered in " +
+                    $"{Time.realtimeSinceStartup - started:0.0}s, crop {result.Crop.width}x{result.Crop.height}: \"{result.Answer.Trim()}\"";
+            }
+            finally
+            {
+                ask.AnswerFinished -= OnFinished;
+            }
         }
 
         // Plays Tabletop Garden through the model: all three tools, pointing ("these", "here") through a simulated

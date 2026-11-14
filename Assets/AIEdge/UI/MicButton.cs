@@ -8,7 +8,9 @@ namespace AIEdge.UI
     /// <summary>
     /// Push-to-talk button for <see cref="SpeechInput"/>: press to start talking, press again to stop. The words heard,
     /// in the app language, go to the panel's callback. Shows how long it has been listening and the voice level.
-    /// The mic gesture (<see cref="AIEdge.Interaction.MicGesture"/>) drives the button of the open panel the same way.
+    /// The mic gesture (<see cref="AIEdge.Interaction.MicGesture"/>) drives the button of the open panel the same way;
+    /// a panel can handle words spoken through the gesture differently (Point &amp; Ask asks about what's in front at
+    /// once).
     /// </summary>
     public class MicButton : MonoBehaviour
     {
@@ -26,14 +28,19 @@ namespace AIEdge.UI
 
         Button m_Button;
         Action<string> m_OnText;
+        Action<string> m_OnGestureText;
         Action<string> m_OnStatus;
         bool m_Listening;
         bool m_Busy;
+        bool m_FromGesture;
 
         /// <summary>Creates the button inside a panel.</summary>
         /// <param name="onText">Receives the words heard (never empty).</param>
         /// <param name="onStatus">Receives short status lines ("Listening…", errors) for the panel, or null.</param>
-        public static Button Create(Transform parent, Action<string> onText, Action<string> onStatus = null, float fontSize = 20)
+        /// <param name="onGestureText">Receives the words instead of <paramref name="onText"/> when listening was started
+        /// by the mic gesture, or null to treat both alike.</param>
+        public static Button Create(Transform parent, Action<string> onText, Action<string> onStatus = null, float fontSize = 20,
+            Action<string> onGestureText = null)
         {
             MicButton mic = null;
             var button = UiFactory.CreateButton(parent, "Talk", UiFactory.CardColor, () => mic.OnPressed(), fontSize);
@@ -41,6 +48,7 @@ namespace AIEdge.UI
             mic.m_Button = button;
             mic.m_OnText = onText;
             mic.m_OnStatus = onStatus;
+            mic.m_OnGestureText = onGestureText;
             return button;
         }
 
@@ -62,7 +70,7 @@ namespace AIEdge.UI
         public void BeginFromGesture()
         {
             if (!m_Listening && !m_Busy)
-                StartListening();
+                StartListening(true);
         }
 
         /// <summary>Stops listening and uses what was said, from the mic gesture.</summary>
@@ -107,11 +115,27 @@ namespace AIEdge.UI
             if (m_Listening)
                 Finish();
             else
-                StartListening();
+                StartListening(false);
         }
 
-        async void StartListening()
+        /// <summary>Hands over words as if they had just been heard (for tests: the room may be silent).</summary>
+        public void DeliverForTests(string text, bool fromGesture)
         {
+            m_FromGesture = fromGesture;
+            Deliver(text);
+        }
+
+        void Deliver(string text)
+        {
+            if (m_FromGesture && m_OnGestureText != null)
+                m_OnGestureText(text);
+            else
+                m_OnText?.Invoke(text);
+        }
+
+        async void StartListening(bool fromGesture)
+        {
+            m_FromGesture = fromGesture;
             var input = SpeechInput.Instance;
             if (input == null || !input.IsReady)
             {
@@ -164,7 +188,7 @@ namespace AIEdge.UI
             }
 
             m_OnStatus?.Invoke("");
-            m_OnText?.Invoke(result.Text.Trim());
+            Deliver(result.Text.Trim());
         }
     }
 }
