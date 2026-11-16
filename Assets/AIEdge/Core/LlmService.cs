@@ -99,6 +99,7 @@ namespace AIEdge
                 if (LoadedModel != null)
                     SetLoaded(null, false, null);
 
+                LlmEngine.SetVisualTokenBudget(withVision ? model.visualTokenBudget : 0);
                 m_Engine.Load(ModelStore.GetPath(model), model.backend, withVision ? model.visionBackend : LlmBackend.None, model.maxTokens);
                 var info = await completion.Awaitable;
                 SetLoaded(model, withVision, info);

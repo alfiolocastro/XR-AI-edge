@@ -45,6 +45,9 @@ namespace AIEdge
         /// <summary>Backend for the image encoder when <see cref="supportsImage"/>.</summary>
         public LlmBackend visionBackend;
 
+        /// <summary>How many tokens an image becomes (the model resizes images to fit), or 0 for the model default.</summary>
+        public int visualTokenBudget;
+
         /// <summary>Direct download URL at the pinned commit.</summary>
         public string DownloadUrl => $"https://huggingface.co/{repoId}/resolve/{commitHash}/{fileName}?download=true";
 
@@ -72,7 +75,12 @@ namespace AIEdge
             sampler = SamplerSettings.Default,
             // Measured on Quest 3 in Phase 0: GPU decodes ~19 tok/s vs ~10 on CPU.
             backend = LlmBackend.Gpu,
-            visionBackend = LlmBackend.Gpu,
+            // The image encoder runs on the CPU, at 70 tokens an image: on the GPU it holds the GPU for one long stretch
+            // and the app stops rendering (about 1 s at the default 280 tokens, 0.17 s at 70). Measured on Quest 3, time
+            // to the first token: GPU 280 tokens 1.7 s; CPU 70 tokens 1.9 s with no dropped frames; CPU 280 tokens 11 s.
+            // 70 tokens is enough for the crops of single objects Point & Ask and What's That? send.
+            visionBackend = LlmBackend.Cpu,
+            visualTokenBudget = 70,
         };
 
         /// <summary>FunctionGemma 270M fine-tuned for Tiny Garden function calling. Gated (auto-approve).</summary>

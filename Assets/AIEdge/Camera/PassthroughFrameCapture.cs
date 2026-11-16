@@ -103,7 +103,10 @@ namespace AIEdge
                 return null;
 
             var size = m_CameraAccess.CurrentResolution;
+            var watch = FrameHitches.Time();
             var colors = m_CameraAccess.GetColors();
+            FrameHitches.Log(watch, "camera readback");
+            watch.Restart();
             var crop = new Color32[region.width * region.height];
             for (var row = 0; row < region.height; row++)
                 NativeArray<Color32>.Copy(colors, (region.y + row) * size.x + region.x, crop, row * region.width, region.width);
@@ -111,7 +114,10 @@ namespace AIEdge
             var texture = new Texture2D(region.width, region.height, TextureFormat.RGBA32, false);
             texture.SetPixels32(crop);
             texture.Apply(false);
+            FrameHitches.Log(watch, $"crop {region.width}x{region.height}");
+            watch.Restart();
             File.WriteAllBytes(path, texture.EncodeToPNG());
+            FrameHitches.Log(watch, "PNG encode and save");
             return texture;
         }
 

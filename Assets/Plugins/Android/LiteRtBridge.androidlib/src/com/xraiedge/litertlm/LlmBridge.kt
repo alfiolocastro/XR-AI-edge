@@ -314,6 +314,16 @@ class LlmBridge(private val listener: Listener) {
       return "files=${found.joinToString(";")} load=$load"
     }
 
+    /**
+     * How many tokens an image becomes (the model resizes images to fit), or <= 0 for the model default.
+     * Global; read when a message with an image is sent.
+     */
+    @JvmStatic
+    @OptIn(ExperimentalApi::class)
+    fun setVisualTokenBudget(budget: Int) {
+      ExperimentalFlags.visualTokenBudget = if (budget > 0) budget else null
+    }
+
     private fun toBackend(name: String): Backend =
       if (name.equals("gpu", ignoreCase = true)) Backend.GPU() else Backend.CPU()
 

@@ -50,6 +50,9 @@ namespace AIEdge.Diagnostics
             await Run("chat_multiturn", TestChatMultiTurn);
             await Run("ask_image", TestAskImage);
             await Run("ask_gesture", TestAskGesture);
+            await Run("ask_stalls", TestAskStalls);
+            await Run("chat_stalls", TestChatStalls);
+            await Run("vision_budget", TestVisionBudget);
             await Run("garden", TestGarden);
             await Run("garden_view", TestGardenView);
             await Run("depth", TestDepth);
@@ -359,6 +362,7 @@ namespace AIEdge.Diagnostics
             AskResult result = null;
             void OnFinished(AskResult r) => result = r;
             ask.AnswerFinished += OnFinished;
+            var frames = FrameHitches.Mark();
             try
             {
                 ask.AskInFront("What is in this image? Answer in one sentence.");
@@ -375,11 +379,175 @@ namespace AIEdge.Diagnostics
             if (result.Error != null)
                 throw new LlmException(result.Error);
 
+            var stalls = FrameHitches.Since(frames);
             File.Copy(result.ImagePath, Path.Combine(Application.persistentDataPath, "selftest_crop.png"), true);
             var camera = FindAnyObjectByType<PassthroughFrameCapture>();
             camera.CaptureToFile(Path.Combine(Application.persistentDataPath, "selftest_frame.png"));
             return $"crop {result.Crop.x},{result.Crop.y} {result.Crop.width}x{result.Crop.height} of {camera.Resolution.x}x{camera.Resolution.y}; " +
-                $"TTFT {result.Stats.ttftSec:0.00}s {result.Stats.decodeTokPerSec:0.0} tok/s; answer \"{result.Answer.Trim()}\"";
+                $"TTFT {result.Stats.ttftSec:0.00}s {result.Stats.decodeTokPerSec:0.0} tok/s; frames: {stalls}; answer \"{result.Answer.Trim()}\"";
+        }
+
+        // Visual token budget and image encoder backend against the frame stall and the time to the
+        // first token, with a camera frame.
+        async Awaitable<string> TestVisionBudget()
+        {
+            var service = LlmService.Instance;
+            var model = ModelCatalog.Gemma4E2B;
+            var saved = model.visionBackend;
+            var savedBudget = model.visualTokenBudget;
+            var file = Path.Combine(Application.temporaryCachePath, "selftest_budget.png");
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            app.OpenAskImage();
+            var camera = FindAnyObjectByType<PassthroughFrameCapture>();
+            var ready = Time.realtimeSinceStartup + 30f;
+            while (!camera.IsReady && Time.realtimeSinceStartup < ready)
+                await Awaitable.NextFrameAsync();
+            if (!camera.CaptureToFile(file))
+                throw new InvalidOperationException("No camera frame.");
+            app.AskImage.Close();
+            var report = "";
+            try
+            {
+                foreach (var (budget, vision) in new[]
+                {
+                    (70, LlmBackend.Gpu), (140, LlmBackend.Gpu), (280, LlmBackend.Gpu),
+                    (70, LlmBackend.Cpu), (140, LlmBackend.Cpu), (280, LlmBackend.Cpu),
+                })
+                {
+                    model.visionBackend = vision;
+                    model.visualTokenBudget = budget;
+                    service.Unload();
+                    await service.LoadAsync(model, withVision: true);
+                    for (var i = 0; i < 2; i++)
+                    {
+                        LlmStats stats = null;
+                        string error = null;
+                        void OnDone(LlmStats s) => stats = s;
+                        void OnFailed(string e) => error = e;
+                        service.Engine.ResponseDone += OnDone;
+                        service.Engine.Failed += OnFailed;
+                        var frames = FrameHitches.Mark();
+                        var answer = new StringBuilder();
+                        void OnToken(string t) => answer.Append(t);
+                        service.Engine.TokenReceived += OnToken;
+                        try
+                        {
+                            service.NewConversation("");
+                            service.Engine.Send("What is in this image? Answer in one sentence.", file);
+                            var deadline = Time.realtimeSinceStartup + 90f;
+                            while (stats == null && error == null && Time.realtimeSinceStartup < deadline)
+                                await Awaitable.NextFrameAsync();
+                        }
+                        finally
+                        {
+                            service.Engine.ResponseDone -= OnDone;
+                            service.Engine.Failed -= OnFailed;
+                            service.Engine.TokenReceived -= OnToken;
+                        }
+                        if (error != null)
+                            throw new LlmException($"{budget} {vision}: {error}");
+                        if (stats == null)
+                            throw new TimeoutException($"{budget} {vision}");
+                        // The first run after a load includes setting up the image encoder.
+                        if (i == 1)
+                            report += $"{vision} budget {budget}: TTFT {stats.ttftSec:0.00}s, {stats.turnTokens} tokens, " +
+                                $"{FrameHitches.Since(frames)}, \"{answer.ToString().Trim()}\"; ";
+                    }
+                }
+            }
+            finally
+            {
+                model.visionBackend = saved;
+                model.visualTokenBudget = savedBudget;
+                service.Unload();
+            }
+            return report;
+        }
+
+        // Frame stalls while the chat model loads and answers three text questions.
+        async Awaitable<string> TestChatStalls()
+        {
+            var service = LlmService.Instance;
+            service.Unload();
+            var frames = FrameHitches.Mark();
+            await service.LoadAsync(ModelCatalog.Gemma4E2B);
+            var report = $"load: {FrameHitches.Since(frames)}";
+            service.NewConversation(AppLanguage.SystemPrompt(""));
+            var questions = new[] { "Name three fruits.", "Which of them is the sweetest?", "Write two sentences about it." };
+            for (var i = 0; i < questions.Length; i++)
+            {
+                LlmStats stats = null;
+                string error = null;
+                void OnDone(LlmStats st) => stats = st;
+                void OnFailed(string e) => error = e;
+                service.Engine.ResponseDone += OnDone;
+                service.Engine.Failed += OnFailed;
+                frames = FrameHitches.Mark();
+                try
+                {
+                    service.Engine.Send(questions[i]);
+                    var deadline = Time.realtimeSinceStartup + 60f;
+                    while (stats == null && error == null && Time.realtimeSinceStartup < deadline)
+                        await Awaitable.NextFrameAsync();
+                }
+                finally
+                {
+                    service.Engine.ResponseDone -= OnDone;
+                    service.Engine.Failed -= OnFailed;
+                }
+                if (error != null)
+                    throw new LlmException(error);
+                if (stats == null)
+                    throw new TimeoutException(questions[i]);
+                report += $"; reply {i + 1} (TTFT {stats.ttftSec:0.00}s): {FrameHitches.Since(frames)}";
+            }
+            service.Unload();
+            return report;
+        }
+
+        // Frame stalls while Point & Ask loads and answers three times in a row: the app must keep rendering while the
+        // model works (stalls are frames over 100 ms).
+        async Awaitable<string> TestAskStalls()
+        {
+            LlmService.Instance.Unload();
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            var ask = app.AskImage;
+            if (app.Chat.IsOpen)
+                app.Chat.Close();
+            var frames = FrameHitches.Mark();
+            app.OpenAskImage();
+            var deadline = Time.realtimeSinceStartup + 120f;
+            while (!ask.IsReady && Time.realtimeSinceStartup < deadline)
+                await Awaitable.NextFrameAsync();
+            if (!ask.IsReady)
+                throw new TimeoutException("Point & Ask never became ready (model or camera).");
+            var report = $"load: {FrameHitches.Since(frames)}";
+
+            for (var i = 1; i <= 3; i++)
+            {
+                AskResult result = null;
+                void OnFinished(AskResult r) => result = r;
+                ask.AnswerFinished += OnFinished;
+                frames = FrameHitches.Mark();
+                try
+                {
+                    ask.AskInFront("What is in this image? Answer in one sentence.");
+                    while (result == null && Time.realtimeSinceStartup < deadline + 60f * i)
+                        await Awaitable.NextFrameAsync();
+                }
+                finally
+                {
+                    ask.AnswerFinished -= OnFinished;
+                }
+                if (result == null)
+                    throw new TimeoutException($"No answer {i}.");
+                if (result.Error != null)
+                    throw new LlmException(result.Error);
+                report += $"; ask {i} (TTFT {result.Stats.ttftSec:0.00}s): {FrameHitches.Since(frames)}";
+                await Awaitable.WaitForSecondsAsync(1f);
+            }
+            ask.Close();
+            return report;
         }
 
         // Point & Ask by voice: words spoken through the mic gesture are asked at once about what's straight ahead;

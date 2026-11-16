@@ -51,6 +51,18 @@ namespace AIEdge
 #endif
         }
 
+        /// <summary>
+        /// Sets how many tokens an image becomes (the model resizes images to fit), or 0 for the model default. Fewer
+        /// tokens make the image encoder faster. Applies to images sent afterwards.
+        /// </summary>
+        public static void SetVisualTokenBudget(int budget)
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            using var bridgeClass = new AndroidJavaClass(k_BridgeClass);
+            bridgeClass.CallStatic("setVisualTokenBudget", budget);
+#endif
+        }
+
         /// <summary>Loads a .litertlm model. Replaces any loaded model.</summary>
         /// <param name="modelPath">Absolute path to the model file on device.</param>
         /// <param name="backend">Backend for the language model.</param>
