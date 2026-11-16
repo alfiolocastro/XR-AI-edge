@@ -70,17 +70,24 @@ namespace AIEdge
         }
 
         /// <summary>
-        /// Loads a downloaded model, replacing the one in memory. Returns at once if it's already loaded
-        /// with the same vision setting.
+        /// Loads a downloaded model, replacing the one in memory. Returns at once if it's already loaded (with its image
+        /// encoder, if asked for).
         /// </summary>
+        /// <remarks>
+        /// A model that reads images loads with its image encoder unless told otherwise, so chat and the camera
+        /// experiences share one load: loading Gemma on the GPU stops the app rendering for over a second, inside
+        /// LiteRT-LM.
+        /// </remarks>
         /// <param name="model">Catalog model.</param>
-        /// <param name="withVision">Enable the image encoder (only for models that support images).</param>
+        /// <param name="withVision">
+        /// Enable the image encoder (only for models that support images), or null for whenever the model supports them.
+        /// </param>
         /// <exception cref="InvalidOperationException">Model not downloaded, or another load in progress.</exception>
         /// <exception cref="LlmException">The engine failed to load the model.</exception>
-        public async Awaitable<LlmLoadInfo> LoadAsync(ModelInfo model, bool withVision = false)
+        public async Awaitable<LlmLoadInfo> LoadAsync(ModelInfo model, bool? withVision = null)
         {
-            withVision &= model.supportsImage;
-            if (LoadedModel == model && LoadedWithVision == withVision && m_Engine.IsLoaded)
+            var vision = (withVision ?? true) && model.supportsImage && model.visionBackend != LlmBackend.None;
+            if (LoadedModel == model && (LoadedWithVision || !vision) && m_Engine.IsLoaded)
                 return m_LoadInfo;
             if (m_Loading)
                 throw new InvalidOperationException("Another model is loading.");
@@ -99,10 +106,10 @@ namespace AIEdge
                 if (LoadedModel != null)
                     SetLoaded(null, false, null);
 
-                LlmEngine.SetVisualTokenBudget(withVision ? model.visualTokenBudget : 0);
-                m_Engine.Load(ModelStore.GetPath(model), model.backend, withVision ? model.visionBackend : LlmBackend.None, model.maxTokens);
+                LlmEngine.SetVisualTokenBudget(vision ? model.visualTokenBudget : 0);
+                m_Engine.Load(ModelStore.GetPath(model), model.backend, vision ? model.visionBackend : LlmBackend.None, model.maxTokens);
                 var info = await completion.Awaitable;
-                SetLoaded(model, withVision, info);
+                SetLoaded(model, vision, info);
                 return info;
             }
             finally

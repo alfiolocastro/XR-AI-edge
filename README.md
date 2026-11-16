@@ -110,6 +110,11 @@ What's That? panel. It offers a few presets (Strict diet, Kid-friendly, Plant lo
 Downloads go to the app's storage (`/sdcard/Android/data/<package>/files/`) and are pinned to fixed Hugging Face
 commits. They resume after interruption and can be deleted from the launcher.
 
+Once downloaded, Gemma 4 E2B loads as the app starts, with its image encoder, and AI Chat, Point & Ask and What's That?
+share that one load. Loading Gemma on the GPU stops the app rendering for about 1.4 s, inside LiteRT-LM (the context
+size and number format make no difference), so this keeps that pause to once, at launch. Tabletop Garden uses its own
+small model in place of Gemma, so Gemma loads again, with the same pause, the next time a Gemma experience opens.
+
 | Item | Used by | Size | Access |
 |---|---|---|---|
 | Gemma 4 E2B-it (`litert-community/gemma-4-E2B-it-litert-lm`) | Chat, Point & Ask | 2.6 GB | Open |
@@ -181,7 +186,7 @@ reply prompts, personal instructions, voice and speech-input packs, mic gesture 
      the people at its bottom left must be found from the file and through the live GPU path, then the live camera must
      run at 2 frames a second or more; finally an injected 90% person straight ahead must become a target with a
      threat level)
-   - Smoothness: `ask_stalls`, `chat_stalls` (dropped frames while Gemma loads and answers three pictures or three
+   - Smoothness: `switch_stalls` (Chat then Point & Ask on one load of Gemma, with no reload and no stall), `ask_stalls`, `chat_stalls` (dropped frames while Gemma loads and answers three pictures or three
      text questions; stalls are frames over 100 ms, which the app also logs as `[AIEdge] Stall`), `vision_budget`
      (time to the first word and stalls for each image token budget, with the image encoder on GPU and CPU)
    - My instructions: `instructions`, `instructions_it`

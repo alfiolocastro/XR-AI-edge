@@ -95,6 +95,30 @@ namespace AIEdge
             m_Launcher.SetExperience(1, "Point & Ask", "Frame something, ask about it", OpenAskImage);
             m_Launcher.SetExperience(2, "Tabletop Garden", "Grow flowers by voice and hand", OpenGarden);
             m_Launcher.SetExperience(3, "What's That?", "Point at an object to name it", OpenWhatsThat);
+
+            await PreloadGemmaAsync();
+        }
+
+        // Loads Gemma (with its image encoder) as the app starts, so AI Chat, Point & Ask and What's That? open ready.
+        // Loading it on the GPU stops the app rendering for over a second, inside LiteRT-LM; this way that happens once,
+        // at launch, instead of when an experience opens. Self-tests manage loading themselves.
+        async Awaitable PreloadGemmaAsync()
+        {
+            var service = LlmService.Instance;
+            var model = ModelCatalog.Gemma4E2B;
+            if (service == null || service.LoadedModel != null || service.IsLoading || ModelStore.GetState(model) != ModelState.Downloaded ||
+                System.IO.File.Exists(System.IO.Path.Combine(Application.persistentDataPath, "selftest.json")))
+                return;
+            try
+            {
+                var info = await service.LoadAsync(model);
+                Debug.Log($"[AIEdge] Preloaded {model.displayName}: {info.backend}, vision {info.visionBackend}, {info.initSec:0.0} s");
+            }
+            catch (System.Exception e)
+            {
+                // An experience opened meanwhile, or the load failed: experiences load what they need themselves.
+                Debug.Log($"[AIEdge] Preloading {model.displayName} skipped: {e.Message}");
+            }
         }
 
         void OnEnable()

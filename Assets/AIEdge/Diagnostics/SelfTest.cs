@@ -53,6 +53,7 @@ namespace AIEdge.Diagnostics
             await Run("ask_stalls", TestAskStalls);
             await Run("chat_stalls", TestChatStalls);
             await Run("vision_budget", TestVisionBudget);
+            await Run("switch_stalls", TestSwitchStalls);
             await Run("garden", TestGarden);
             await Run("garden_view", TestGardenView);
             await Run("depth", TestDepth);
@@ -462,6 +463,43 @@ namespace AIEdge.Diagnostics
                 service.Unload();
             }
             return report;
+        }
+
+        // Chat, then Point & Ask, on one load of Gemma: opening them must not load it again (each load stops rendering
+        // for over a second), nor stall.
+        async Awaitable<string> TestSwitchStalls()
+        {
+            var app = FindAnyObjectByType<AIEdgeApp>();
+            var service = LlmService.Instance;
+            service.Unload();
+            await service.LoadAsync(ModelCatalog.Gemma4E2B);
+            var loads = 0;
+            void OnLoadedModelChanged(ModelInfo m) => loads++;
+            service.LoadedModelChanged += OnLoadedModelChanged;
+            var frames = FrameHitches.Mark();
+            try
+            {
+                app.OpenChat();
+                await Awaitable.WaitForSecondsAsync(3f);
+                app.Chat.Close();
+                app.OpenAskImage();
+                var deadline = Time.realtimeSinceStartup + 60f;
+                while (!app.AskImage.IsReady && Time.realtimeSinceStartup < deadline)
+                    await Awaitable.NextFrameAsync();
+                if (!app.AskImage.IsReady)
+                    throw new TimeoutException("Point & Ask never became ready.");
+                app.AskImage.Close();
+            }
+            finally
+            {
+                service.LoadedModelChanged -= OnLoadedModelChanged;
+            }
+            var stats = FrameHitches.Since(frames);
+            if (loads > 0)
+                throw new InvalidOperationException($"Gemma was loaded again {loads} times; {stats}");
+            if (stats.stallSeconds > 0f)
+                throw new InvalidOperationException($"Stalled: {stats}");
+            return $"vision {service.LoadInfo.visionBackend}, {service.LoadInfo.pssMb} MB; {stats}";
         }
 
         // Frame stalls while the chat model loads and answers three text questions.
